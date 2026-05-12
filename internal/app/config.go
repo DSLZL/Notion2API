@@ -125,6 +125,8 @@ type NotionAccount struct {
 	ResinURL            string `json:"resin_url,omitempty"`
 	ResinPlatform       string `json:"resin_platform,omitempty"`
 	ResinMode           string `json:"resin_mode,omitempty"`
+	ResinAuthVersion    string `json:"resin_auth_version,omitempty"`
+	ResinProxyToken     string `json:"resin_proxy_token,omitempty"`
 	ConsecutiveFailures int    `json:"consecutive_failures,omitempty"`
 	TotalSuccesses      int    `json:"total_successes,omitempty"`
 	TotalFailures       int    `json:"total_failures,omitempty"`
@@ -160,6 +162,8 @@ type AppConfig struct {
 	ResinURL              string               `json:"resin_url,omitempty"`
 	ResinPlatform         string               `json:"resin_platform,omitempty"`
 	ResinMode             string               `json:"resin_mode,omitempty"`
+	ResinAuthVersion      string               `json:"resin_auth_version,omitempty"`
+	ResinProxyToken       string               `json:"resin_proxy_token,omitempty"`
 	ModelID               string               `json:"model_id,omitempty"`
 	DefaultModel          string               `json:"default_model,omitempty"`
 	ActiveAccount         string               `json:"active_account,omitempty"`
@@ -225,8 +229,38 @@ func normalizeProxyMode(raw string) string {
 	return proxyModeOff
 }
 
-func trimProxyFields(mode string, proxyURL string, proxyHTTPURL string, proxyHTTPSURL string, resinURL string, resinPlatform string, resinMode string) (string, string, string, string, string, string, string) {
-	return normalizeProxyMode(mode), strings.TrimSpace(proxyURL), strings.TrimSpace(proxyHTTPURL), strings.TrimSpace(proxyHTTPSURL), strings.TrimSpace(resinURL), strings.TrimSpace(resinPlatform), strings.TrimSpace(resinMode)
+func normalizeResinAuthVersion(raw string) string {
+	value := strings.ToUpper(strings.TrimSpace(raw))
+	switch value {
+	case "", "V1":
+		return "V1"
+	case "LEGACY_V0":
+		return "LEGACY_V0"
+	default:
+		return "V1"
+	}
+}
+
+func trimProxyFields(
+	mode string,
+	proxyURL string,
+	proxyHTTPURL string,
+	proxyHTTPSURL string,
+	resinURL string,
+	resinPlatform string,
+	resinMode string,
+	resinAuthVersion string,
+	resinProxyToken string,
+) (string, string, string, string, string, string, string, string, string) {
+	return normalizeProxyMode(mode),
+		strings.TrimSpace(proxyURL),
+		strings.TrimSpace(proxyHTTPURL),
+		strings.TrimSpace(proxyHTTPSURL),
+		strings.TrimSpace(resinURL),
+		strings.TrimSpace(resinPlatform),
+		strings.TrimSpace(resinMode),
+		normalizeResinAuthVersion(resinAuthVersion),
+		strings.TrimSpace(resinProxyToken)
 }
 
 func resolveProxyModeFromN2AEnv() string {
@@ -306,6 +340,22 @@ func resolveResinModeFromN2AEnv() string {
 	))
 }
 
+func resolveResinAuthVersionFromN2AEnv() string {
+	return strings.TrimSpace(firstNonEmpty(
+		os.Getenv("N2A_RESIN_AUTH_VERSION"),
+		os.Getenv("N2A_PROXY_RESIN_AUTH_VERSION"),
+		os.Getenv("N2A_UPSTREAM_RESIN_AUTH_VERSION"),
+	))
+}
+
+func resolveResinProxyTokenFromN2AEnv() string {
+	return strings.TrimSpace(firstNonEmpty(
+		os.Getenv("N2A_RESIN_PROXY_TOKEN"),
+		os.Getenv("N2A_PROXY_RESIN_PROXY_TOKEN"),
+		os.Getenv("N2A_UPSTREAM_RESIN_PROXY_TOKEN"),
+	))
+}
+
 func applyN2AProxyEnv(cfg AppConfig) AppConfig {
 	if mode := resolveProxyModeFromN2AEnv(); mode != "" {
 		cfg.ProxyMode = mode
@@ -330,6 +380,12 @@ func applyN2AProxyEnv(cfg AppConfig) AppConfig {
 	}
 	if value := resolveResinModeFromN2AEnv(); value != "" {
 		cfg.ResinMode = value
+	}
+	if value := resolveResinAuthVersionFromN2AEnv(); value != "" {
+		cfg.ResinAuthVersion = value
+	}
+	if value := resolveResinProxyTokenFromN2AEnv(); value != "" {
+		cfg.ResinProxyToken = value
 	}
 	return cfg
 }
@@ -508,7 +564,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	cfg.UpstreamHost = strings.TrimSpace(cfg.UpstreamHost)
 	cfg.UpstreamTLSServerName = strings.TrimSpace(cfg.UpstreamTLSServerName)
 	rawProxyMode := strings.TrimSpace(cfg.ProxyMode)
-	cfg.ProxyMode, cfg.ProxyURL, cfg.ProxyHTTPURL, cfg.ProxyHTTPSURL, cfg.ResinURL, cfg.ResinPlatform, cfg.ResinMode = trimProxyFields(
+	cfg.ProxyMode, cfg.ProxyURL, cfg.ProxyHTTPURL, cfg.ProxyHTTPSURL, cfg.ResinURL, cfg.ResinPlatform, cfg.ResinMode, cfg.ResinAuthVersion, cfg.ResinProxyToken = trimProxyFields(
 		cfg.ProxyMode,
 		cfg.ProxyURL,
 		cfg.ProxyHTTPURL,
@@ -516,6 +572,8 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 		cfg.ResinURL,
 		cfg.ResinPlatform,
 		cfg.ResinMode,
+		cfg.ResinAuthVersion,
+		cfg.ResinProxyToken,
 	)
 	if cfg.ProxyMode == "" {
 		cfg.ProxyMode = proxyModeOff
@@ -631,7 +689,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 		cfg.Accounts[i].Status = strings.TrimSpace(cfg.Accounts[i].Status)
 		cfg.Accounts[i].LastError = strings.TrimSpace(cfg.Accounts[i].LastError)
 		cfg.Accounts[i].LastLoginAt = strings.TrimSpace(cfg.Accounts[i].LastLoginAt)
-		cfg.Accounts[i].ProxyMode, cfg.Accounts[i].ProxyURL, cfg.Accounts[i].ProxyHTTPURL, cfg.Accounts[i].ProxyHTTPSURL, cfg.Accounts[i].ResinURL, cfg.Accounts[i].ResinPlatform, cfg.Accounts[i].ResinMode = trimProxyFields(
+		cfg.Accounts[i].ProxyMode, cfg.Accounts[i].ProxyURL, cfg.Accounts[i].ProxyHTTPURL, cfg.Accounts[i].ProxyHTTPSURL, cfg.Accounts[i].ResinURL, cfg.Accounts[i].ResinPlatform, cfg.Accounts[i].ResinMode, cfg.Accounts[i].ResinAuthVersion, cfg.Accounts[i].ResinProxyToken = trimProxyFields(
 			cfg.Accounts[i].ProxyMode,
 			cfg.Accounts[i].ProxyURL,
 			cfg.Accounts[i].ProxyHTTPURL,
@@ -639,6 +697,8 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 			cfg.Accounts[i].ResinURL,
 			cfg.Accounts[i].ResinPlatform,
 			cfg.Accounts[i].ResinMode,
+			cfg.Accounts[i].ResinAuthVersion,
+			cfg.Accounts[i].ResinProxyToken,
 		)
 		cfg.Accounts[i].StickyProxyAccount = strings.TrimSpace(cfg.Accounts[i].StickyProxyAccount)
 		cfg.Accounts[i].MaxConcurrency = normalizeAccountMaxConcurrency(cfg.Accounts[i].MaxConcurrency)

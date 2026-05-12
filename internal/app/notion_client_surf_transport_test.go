@@ -205,6 +205,30 @@ func TestLoginTransportDoRequest_SurfPreservesRedirectCookiesInSessionJar(t *tes
 	}
 }
 
+func TestBuildLoginTransportRequest_UsesResolverDerivedProxyAndHeaders(t *testing.T) {
+	cfg := normalizeConfig(AppConfig{
+		ProxyMode:        proxyModeResinForward,
+		ResinEnabled:     true,
+		ResinURL:         "http://127.0.0.1:2260/token-e",
+		ResinPlatform:    "Default",
+		ResinMode:        "forward",
+		ResinAuthVersion: "V1",
+	})
+	targetURL := "https://www.notion.so/api/v3/enqueueTask"
+	req := buildLoginTransportRequest(&loginHTTPSession{
+		Client:        &http.Client{},
+		ProxyResolver: NewProxyResolver(cfg),
+		AccountEmail:  "alice@example.com",
+	}, http.MethodPost, targetURL, map[string]string{"Content-Type": "application/json"}, []byte(`{}`))
+
+	if strings.TrimSpace(req.Proxy) == "" {
+		t.Fatalf("expected resolver-derived proxy value")
+	}
+	if got := req.Headers[defaultResinAccountHeader]; strings.TrimSpace(got) == "" {
+		t.Fatalf("expected resolver-derived sticky header")
+	}
+}
+
 func TestRunInferenceTranscriptInBrowserWithSurf_ReturnsNDJSON(t *testing.T) {
 	line := `{"type":"agent-inference","id":"m1","finishedAt":"2026-05-03T00:00:00Z","value":[{"type":"text","content":"OK"}]}` + "\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

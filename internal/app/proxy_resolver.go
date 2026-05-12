@@ -41,7 +41,7 @@ func (r *ProxyResolver) ResolveProxyForRequest(accountEmail string, target *url.
 		}
 		return parsed, nil, nil
 	case proxyModeResinForward:
-		proxyURL, stickyAccount, err := resolveResinForwardProxyURL(policy, accountEmail, r.cfg)
+		proxyURL, stickyAccount, err := resolveResinProxyURL(policy, accountEmail, r.cfg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -75,6 +75,36 @@ func parseProxyURL(raw string) (*url.URL, error) {
 	}
 }
 
+func redactProxyURLForLog(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil {
+		return "<invalid-proxy-url>"
+	}
+	parsed.User = url.User("redacted")
+	return parsed.String()
+}
+
+func resolveResinProxyURL(policy ProxyPolicy, email string, cfg AppConfig) (*url.URL, string, error) {
+	requestedMode := normalizeResinMode(policy.Resin.Mode)
+	switch requestedMode {
+	case resinModeForward:
+		return resolveResinForwardProxyURL(policy, email, cfg)
+	case "reverse":
+		// Strong compatibility: current client still expects proxy URL semantics.
+		return resolveResinForwardProxyURL(policy, email, cfg)
+	case "connect":
+		// Strong compatibility: use HTTP forward endpoint for CONNECT-capable clients.
+		return resolveResinForwardProxyURL(policy, email, cfg)
+	case "socks5":
+		if normalizeResinAuthVersion(policy.Resin.AuthVersion) != "V1" {
+			return resolveResinForwardProxyURL(policy, email, cfg)
+		}
+		return resolveResinSOCKS5ProxyURL(policy, email, cfg)
+	default:
+		return resolveResinForwardProxyURL(policy, email, cfg)
+	}
+}
+
 func resolveResinForwardProxyURL(policy ProxyPolicy, email string, cfg AppConfig) (*url.URL, string, error) {
 	if !policy.Resin.Enabled {
 		return nil, "", nil
@@ -92,11 +122,37 @@ func resolveResinForwardProxyURL(policy ProxyPolicy, email string, cfg AppConfig
 		stickyAccount = "account"
 	}
 	proxyURL := *baseURL
-	if strings.TrimSpace(token) != "" {
-		username := fmt.Sprintf("%s.%s", platform, stickyAccount)
-		proxyURL.User = url.UserPassword(username, token)
+	token = firstNonEmpty(strings.TrimSpace(policy.Resin.ProxyToken), strings.TrimSpace(token))
+	if username, password := buildResinProxyCredentials(policy.Resin.AuthVersion, platform, stickyAccount, token); username != "" || password != "" {
+		proxyURL.User = url.UserPassword(username, password)
 	}
 	return &proxyURL, stickyAccount, nil
+}
+
+func resolveResinSOCKS5ProxyURL(policy ProxyPolicy, email string, cfg AppConfig) (*url.URL, string, error) {
+	proxyURL, stickyAccount, err := resolveResinForwardProxyURL(policy, email, cfg)
+	if err != nil || proxyURL == nil {
+		return proxyURL, stickyAccount, err
+	}
+	asSOCKS5 := *proxyURL
+	asSOCKS5.Scheme = "socks5"
+	return &asSOCKS5, stickyAccount, nil
+}
+
+func buildResinProxyCredentials(authVersion, platform, account, token string) (username string, password string) {
+	cleanVersion := normalizeResinAuthVersion(authVersion)
+	cleanPlatform := strings.TrimSpace(platform)
+	if cleanPlatform == "" {
+		cleanPlatform = "Default"
+	}
+	cleanAccount := strings.TrimSpace(account)
+	cleanToken := strings.TrimSpace(token)
+	switch cleanVersion {
+	case "LEGACY_V0":
+		return cleanToken, fmt.Sprintf("%s:%s", cleanPlatform, cleanAccount)
+	default:
+		return fmt.Sprintf("%s.%s", cleanPlatform, cleanAccount), cleanToken
+	}
 }
 
 func splitResinURL(raw string) (*url.URL, string, error) {

@@ -16,6 +16,8 @@
   "resin_url": "",
   "resin_platform": "Default",
   "resin_mode": "forward",
+  "resin_auth_version": "V1",
+  "resin_proxy_token": "",
   "model_id": "auto",
   "default_model": "auto",
   "active_account": "",
@@ -95,6 +97,8 @@
       "resin_url": "http://127.0.0.1:2260/your-resin-token",
       "resin_platform": "Default",
       "resin_mode": "forward",
+      "resin_auth_version": "V1",
+      "resin_proxy_token": "",
       "priority": 100,
       "disabled": false
     },

@@ -12,6 +12,8 @@ type ResinPolicy struct {
 	URL           string
 	Platform      string
 	Mode          string
+	AuthVersion   string
+	ProxyToken    string
 	AccountHeader string
 }
 
@@ -27,9 +29,11 @@ func normalizeResinMode(raw string) string {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	switch mode {
 	case "", resinModeForward:
+		return resinModeForward
+	case "reverse", "connect", "socks5":
 		return mode
 	default:
-		return mode
+		return resinModeForward
 	}
 }
 
@@ -48,11 +52,10 @@ func (cfg AppConfig) ResolveProxyPolicy() ProxyPolicy {
 			URL:           strings.TrimSpace(cfg.ResinURL),
 			Platform:      strings.TrimSpace(cfg.ResinPlatform),
 			Mode:          normalizeResinMode(cfg.ResinMode),
+			AuthVersion:   normalizeResinAuthVersion(cfg.ResinAuthVersion),
+			ProxyToken:    strings.TrimSpace(cfg.ResinProxyToken),
 			AccountHeader: defaultResinAccountHeader,
 		},
-	}
-	if policy.Resin.Mode == "" {
-		policy.Resin.Mode = resinModeForward
 	}
 	if policy.Mode == proxyModeResinForward {
 		policy.Resin.Enabled = true
@@ -97,8 +100,11 @@ func (cfg AppConfig) ResolveProxyPolicyForAccount(email string) ProxyPolicy {
 	if value := normalizeResinMode(account.ResinMode); value != "" {
 		policy.Resin.Mode = value
 	}
-	if policy.Resin.Mode == "" {
-		policy.Resin.Mode = resinModeForward
+	if value := normalizeResinAuthVersion(account.ResinAuthVersion); value != "" {
+		policy.Resin.AuthVersion = value
+	}
+	if value := strings.TrimSpace(account.ResinProxyToken); value != "" {
+		policy.Resin.ProxyToken = value
 	}
 	if policy.Mode == proxyModeResinForward {
 		policy.Resin.Enabled = true

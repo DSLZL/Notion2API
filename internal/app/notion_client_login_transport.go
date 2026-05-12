@@ -69,8 +69,16 @@ func buildLoginTransportRequest(session *loginHTTPSession, method string, target
 	proxyValue := ""
 	if session != nil && session.ProxyResolver != nil {
 		if parsed, parseErr := url.Parse(targetURL); parseErr == nil {
-			if proxyURL, _, resolveErr := session.ProxyResolver.ResolveProxyForRequest(session.AccountEmail, parsed); resolveErr == nil && proxyURL != nil {
-				proxyValue = proxyURL.String()
+			if proxyURL, extraHeaders, resolveErr := session.ProxyResolver.ResolveProxyForRequest(session.AccountEmail, parsed); resolveErr == nil {
+				if proxyURL != nil {
+					proxyValue = proxyURL.String()
+				}
+				for key, value := range extraHeaders {
+					if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+						continue
+					}
+					headers[key] = value
+				}
 			}
 		}
 	}

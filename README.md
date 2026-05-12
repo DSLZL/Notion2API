@@ -22,6 +22,8 @@ go run ./cmd/notion2api --config ./config.example.json
 ### 本地构建
 
 ```bash
+bun --cwd ./frontend ci
+bun --cwd ./frontend run build:static
 go build ./cmd/notion2api
 ```
 
@@ -103,6 +105,15 @@ HTTP 请求优先顺序：
 - 代理认证用户名格式：`<resin_platform>.<sticky_proxy_account>`
 - 密码使用 `resin_url` 中 token
 - 请求会附带 `X-Resin-Account` 头
+- `resin_auth_version` 默认 `V1`，可选 `LEGACY_V0`
+- `resin_proxy_token` 可显式覆盖 `resin_url` 内 token
+
+`resin_mode` 强兼容规则：
+
+- 支持 `forward` / `reverse` / `connect` / `socks5`
+- `reverse` 与 `connect` 当前兼容映射为 forward 代理语义
+- `socks5` 仅 `resin_auth_version=V1` 生效，否则自动回退到 forward
+- 未知 mode 自动回退到 forward
 
 ## 配置说明
 
@@ -112,7 +123,7 @@ HTTP 请求优先顺序：
 - `admin.password`：WebUI 登录密码
 - `upstream_base_url` / `upstream_origin`
 - `proxy_mode` / `proxy_url` / `proxy_http_url` / `proxy_https_url`
-- `resin_enabled` / `resin_url` / `resin_platform` / `resin_mode`
+- `resin_enabled` / `resin_url` / `resin_platform` / `resin_mode` / `resin_auth_version` / `resin_proxy_token`
 - `accounts[*].sticky_proxy_account`
 - `accounts` / `active_account`
 - `storage.sqlite_path`
@@ -125,7 +136,7 @@ HTTP 请求优先顺序：
 ## 使用建议
 
 - 首次启动后先访问 `/admin`，确认账号、配置和连通性是否正常
-- 修改管理台前端后需执行 `npm --prefix ./frontend run build:static`
+- 修改管理台前端后需执行 `bun --cwd ./frontend run build:static`
 - 调整会话延续与存储时，建议同步检查 `internal/app/sqlite_store.go` 的 schema 与迁移兼容性
 
 ## 开源协议
