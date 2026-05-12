@@ -57,6 +57,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Build frontend static admin
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd frontend
+          bun ci
+          bun run build:static
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -95,6 +108,7 @@ jobs:
           cp LICENSE "${staging_dir}/"
           cp config.example.json "${staging_dir}/"
           cp config.docker.json "${staging_dir}/"
+          cp -r static "${staging_dir}/"
 
           if [[ "${ARCHIVE_KIND}" == "zip" ]]; then
             (

@@ -19,3 +19,4 @@ _admin_preview_base64.txt
 frontend/node_modules
 frontend/.next
 frontend/out
+static/admin

@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:static": "next build && node ./scripts/sync-static.mjs",
-    "typecheck": "node ./scripts/ensure-next-types.mjs && tsc --noEmit"
+    "build:static": "next build && bun ./scripts/sync-static.mjs",
+    "typecheck": "bun ./scripts/ensure-next-types.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

@@ -1,11 +1,11 @@
-FROM --platform=$BUILDPLATFORM node:22-bookworm AS frontend-builder
+FROM --platform=$BUILDPLATFORM oven/bun:1 AS frontend-builder
 
 WORKDIR /frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npm ci
+COPY frontend/package.json frontend/bun.lock ./
+RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
+    bun install --frozen-lockfile
 COPY frontend ./
-RUN npm run build
+RUN bun run build
 
 FROM --platform=$BUILDPLATFORM golang:1.25.0-bookworm AS builder
 ARG BUILDPLATFORM
@@ -21,7 +21,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY cmd ./cmd
 COPY internal ./internal
-COPY static ./static
 COPY --from=frontend-builder /frontend/out /src/static/admin
 
 RUN --mount=type=cache,target=/go/pkg/mod \
