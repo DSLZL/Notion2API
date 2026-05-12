@@ -140,6 +140,11 @@ func readLoginPendingState(path string) (loginPendingState, error) {
 }
 
 func writeLoginPendingState(path string, payload loginPendingState) error {
+	if existing, err := readLoginPendingState(path); err == nil {
+		payload.LoginOptionsToken = firstNonEmpty(payload.LoginOptionsToken, existing.LoginOptionsToken)
+		payload.CSRFState = firstNonEmpty(payload.CSRFState, existing.CSRFState)
+		payload.DeviceID = firstNonEmpty(payload.DeviceID, existing.DeviceID)
+	}
 	payload.PendingStatePath = firstNonEmpty(payload.PendingStatePath, path)
 	payload.UpdatedAt = helperNowISO()
 	return writePrettyJSONFile(path, payload)
