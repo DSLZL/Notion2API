@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY cmd ./cmd
 COPY internal ./internal
-COPY --from=frontend-builder /frontend/out /src/static/admin
+COPY --from=frontend-builder /static/admin /src/static/admin
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

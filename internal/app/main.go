@@ -109,7 +109,7 @@ const (
 	ephemeralConversationCleanupBatchSize = 24
 	sillyTavernQuietConversationTTL       = 10 * time.Minute
 	corsAllowOrigin                       = "*"
-	corsAllowHeaders                      = "Authorization, Content-Type, X-Admin-Token"
+	corsAllowHeaders                      = "Authorization, Content-Type, X-Admin-Token, X-Requested-With"
 	corsAllowMethods                      = "GET, POST, PUT, DELETE, OPTIONS"
 )
 

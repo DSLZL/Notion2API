@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -168,6 +169,89 @@ func shouldUseSecureCookie(r *http.Request) bool {
 	return false
 }
 
+func adminMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		return true
+	default:
+		return false
+	}
+}
+
+func adminRequestHost(r *http.Request) string {
+	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+		parts := strings.Split(forwardedHost, ",")
+		if len(parts) > 0 {
+			if host := strings.TrimSpace(parts[0]); host != "" {
+				return host
+			}
+		}
+	}
+	return strings.TrimSpace(r.Host)
+}
+
+func adminExpectedOrigin(r *http.Request) string {
+	host := strings.ToLower(strings.TrimSpace(adminRequestHost(r)))
+	if host == "" {
+		return ""
+	}
+	scheme := "http"
+	if shouldUseSecureCookie(r) {
+		scheme = "https"
+	}
+	return scheme + "://" + host
+}
+
+func parseRequestOrigin(raw string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("missing scheme or host")
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host), nil
+}
+
+func writeAdminOriginError(w http.ResponseWriter, detail string) bool {
+	writeJSON(w, http.StatusForbidden, map[string]any{"detail": detail})
+	return false
+}
+
+func (a *App) adminSameOriginOK(w http.ResponseWriter, r *http.Request) bool {
+	if !adminMutatingMethod(r.Method) {
+		return true
+	}
+	expected := adminExpectedOrigin(r)
+	if expected == "" {
+		return writeAdminOriginError(w, "unable to resolve admin origin")
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	referer := strings.TrimSpace(r.Header.Get("Referer"))
+	if origin == "" && referer == "" {
+		return writeAdminOriginError(w, "origin or referer required for admin write requests")
+	}
+	if origin != "" {
+		actual, err := parseRequestOrigin(origin)
+		if err != nil {
+			return writeAdminOriginError(w, "invalid origin header")
+		}
+		if actual != expected {
+			return writeAdminOriginError(w, fmt.Sprintf("origin mismatch: expected %s", expected))
+		}
+	}
+	if referer != "" {
+		actual, err := parseRequestOrigin(referer)
+		if err != nil {
+			return writeAdminOriginError(w, "invalid referer header")
+		}
+		if actual != expected {
+			return writeAdminOriginError(w, fmt.Sprintf("referer mismatch: expected %s", expected))
+		}
+	}
+	return true
+}
+
 func (a *App) cleanupAdminLoginAttemptsLocked(now time.Time) {
 	for key, attempt := range a.State.AdminLoginAttempts {
 		if attempt.Failures <= 0 && attempt.LockedUntil.IsZero() {
@@ -284,6 +368,9 @@ func (a *App) adminAuthOK(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusForbidden, map[string]any{"detail": "admin password is not configured"})
 		return false
 	}
+	if !a.adminSameOriginOK(w, r) {
+		return false
+	}
 	if a.adminTokenValid(adminTokenFromRequest(r)) {
 		return true
 	}
@@ -311,8 +398,9 @@ func (a *App) getConfigPayload() map[string]any {
 		"config_path":    cfg.ConfigPath,
 		"active_account": cfg.ActiveAccount,
 		"secrets": map[string]any{
-			"api_key_set":        strings.TrimSpace(cfg.APIKey) != "",
-			"admin_password_set": strings.TrimSpace(cfg.Admin.Password) != "",
+			"api_key_set":           strings.TrimSpace(cfg.APIKey) != "",
+			"admin_password_set":    strings.TrimSpace(cfg.Admin.Password) != "",
+			"resin_proxy_token_set": strings.TrimSpace(cfg.ResinProxyToken) != "",
 		},
 		"session_ready": sessionReady,
 		"session": map[string]any{
@@ -352,8 +440,9 @@ func (a *App) getSettingsPayload() map[string]any {
 			"static_dir":      cfg.Admin.StaticDir,
 		},
 		"secrets": map[string]any{
-			"api_key_set":        strings.TrimSpace(cfg.APIKey) != "",
-			"admin_password_set": strings.TrimSpace(cfg.Admin.Password) != "",
+			"api_key_set":           strings.TrimSpace(cfg.APIKey) != "",
+			"admin_password_set":    strings.TrimSpace(cfg.Admin.Password) != "",
+			"resin_proxy_token_set": strings.TrimSpace(cfg.ResinProxyToken) != "",
 		},
 		"runtime": map[string]any{
 			"timeout_sec":        cfg.TimeoutSec,
@@ -411,6 +500,9 @@ func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
+		return
+	}
+	if !a.adminSameOriginOK(w, r) {
 		return
 	}
 	password := cfg.Admin.Password
@@ -474,6 +566,9 @@ func (a *App) handleAdminVerify(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
+		return
+	}
+	if !a.adminSameOriginOK(w, r) {
 		return
 	}
 	token := adminTokenFromRequest(r)
@@ -811,6 +906,8 @@ func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		a.handleAdminConversationByID(w, r)
 	case r.URL.Path == "/admin/accounts":
 		a.handleAdminAccounts(w, r)
+	case r.URL.Path == "/admin/accounts/batch-update":
+		a.handleAdminAccountBatchUpdate(w, r)
 	case r.URL.Path == "/admin/accounts/activate":
 		a.handleAdminAccountsActivate(w, r)
 	case r.URL.Path == "/admin/accounts/test":

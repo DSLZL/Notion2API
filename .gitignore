@@ -31,7 +31,6 @@ node_modules/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
-/static/admin/
 *.tsbuildinfo
 
 # Local test sources stay out of git
@@ -44,3 +43,5 @@ __tests__/
 WEBUI_DEVELOPMENT_GUIDE.md
 .serena/
 1.md
+PLAN.md
+.codex/

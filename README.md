@@ -19,6 +19,26 @@
 go run ./cmd/notion2api --config ./config.example.json
 ```
 
+如果只是本机手工测试，建议先复制一份本地测试配置再启动：
+
+```bash
+cp ./config.local.example.json ./config.local.json
+go run ./cmd/notion2api --config ./config.local.json
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .\config.local.example.json .\config.local.json
+go run .\cmd\notion2api --config .\config.local.json
+```
+
+说明：
+
+- 不要直接运行 `go run .\cmd\notion2api\main.go`，否则不会自动带上配置文件路径
+- `config.local.example.json` 自带本地测试用占位 `api_key` 和 `admin.password`
+- 如果要对外暴露或接入真实客户端，请把 `api_key` / `admin.password` 改成你自己的值
+
 ### 本地构建
 
 ```bash
@@ -132,6 +152,7 @@ HTTP 请求优先顺序：
 
 - `config.example.json`
 - `config.docker.json`
+- `config.local.example.json`
 
 ## 使用建议
 

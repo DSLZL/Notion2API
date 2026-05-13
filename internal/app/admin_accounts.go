@@ -254,6 +254,80 @@ func mergeEditableAccountFields(existing NotionAccount, payload map[string]any) 
 	return next, makeActive, nil
 }
 
+func (a *App) handleAdminAccountBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.adminAuthOK(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
+		return
+	}
+	payload, err := a.decodeBody(w, r)
+	if err != nil {
+		writeInvalidBodyError(w, err)
+		return
+	}
+	rawEmails, ok := payload["emails"].([]any)
+	if !ok || len(rawEmails) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "emails is required"})
+		return
+	}
+	action := strings.TrimSpace(stringValue(payload["action"]))
+	if action != "disable" && action != "enable" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "action must be disable or enable"})
+		return
+	}
+	emails := make([]string, 0, len(rawEmails))
+	seen := make(map[string]struct{}, len(rawEmails))
+	for _, raw := range rawEmails {
+		email := strings.TrimSpace(stringValue(raw))
+		if email == "" {
+			continue
+		}
+		key := canonicalEmailKey(email)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		emails = append(emails, email)
+	}
+	if len(emails) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "emails is required"})
+		return
+	}
+	cfg, _, _ := a.State.Snapshot()
+	updated := 0
+	desiredDisabled := action == "disable"
+	for _, email := range emails {
+		account, index, found := cfg.FindAccount(email)
+		if !found {
+			writeJSON(w, http.StatusNotFound, map[string]any{"detail": fmt.Sprintf("account not found: %s", email)})
+			return
+		}
+		if account.Disabled == desiredDisabled {
+			continue
+		}
+		account.Disabled = desiredDisabled
+		cfg.Accounts[index] = ensureAccountPaths(cfg, account)
+		if desiredDisabled && canonicalEmailKey(cfg.ActiveAccount) == getAccountEmailKey(account) {
+			cfg.ActiveAccount = ""
+			cfg.ProbeJSON = ""
+		}
+		updated++
+	}
+	if err := a.State.SaveAndApply(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
+		return
+	}
+	a.invalidateDispatchProbeCache()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"updated": updated,
+		"action":  action,
+		"emails":  emails,
+	})
+}
+
 func (a *App) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 	if !a.adminAuthOK(w, r) {
 		return
