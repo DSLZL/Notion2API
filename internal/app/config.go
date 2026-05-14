@@ -490,7 +490,7 @@ func defaultConfig() AppConfig {
 			Enabled:       true,
 			Password:      "",
 			TokenTTLHours: 24,
-			StaticDir:     "static/admin",
+			StaticDir:     "frontend/dist/admin",
 		},
 		Responses: ResponsesConfig{
 			StoreTTLSeconds: 3600,
@@ -548,7 +548,7 @@ func defaultConfig() AppConfig {
 	})
 }
 
-func normalizeConfig(cfg AppConfig) AppConfig {
+func normalizeTopLevelConfigDefaults(cfg AppConfig) AppConfig {
 	if strings.TrimSpace(cfg.DefaultModel) == "" {
 		cfg.DefaultModel = strings.TrimSpace(cfg.ModelID)
 	}
@@ -563,6 +563,22 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	cfg.UpstreamOrigin = normalizeBaseURL(firstNonEmpty(cfg.UpstreamOrigin, cfg.UpstreamBaseURL))
 	cfg.UpstreamHost = strings.TrimSpace(cfg.UpstreamHost)
 	cfg.UpstreamTLSServerName = strings.TrimSpace(cfg.UpstreamTLSServerName)
+	if cfg.Port <= 0 {
+		cfg.Port = 8787
+	}
+	if cfg.TimeoutSec <= 0 {
+		cfg.TimeoutSec = 180
+	}
+	if cfg.PollIntervalSec <= 0 {
+		cfg.PollIntervalSec = 1.5
+	}
+	if cfg.PollMaxRounds <= 0 {
+		cfg.PollMaxRounds = 40
+	}
+	return cfg
+}
+
+func normalizeProxyConfigDefaults(cfg AppConfig) AppConfig {
 	rawProxyMode := strings.TrimSpace(cfg.ProxyMode)
 	cfg.ProxyMode, cfg.ProxyURL, cfg.ProxyHTTPURL, cfg.ProxyHTTPSURL, cfg.ResinURL, cfg.ResinPlatform, cfg.ResinMode, cfg.ResinAuthVersion, cfg.ResinProxyToken = trimProxyFields(
 		cfg.ProxyMode,
@@ -581,18 +597,12 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	if cfg.UpstreamUseEnvProxy && rawProxyMode == "" && cfg.ProxyMode == proxyModeOff {
 		cfg.ProxyMode = proxyModeEnv
 	}
-	if cfg.Port <= 0 {
-		cfg.Port = 8787
-	}
-	if cfg.TimeoutSec <= 0 {
-		cfg.TimeoutSec = 180
-	}
-	if cfg.PollIntervalSec <= 0 {
-		cfg.PollIntervalSec = 1.5
-	}
-	if cfg.PollMaxRounds <= 0 {
-		cfg.PollMaxRounds = 40
-	}
+	return cfg
+}
+
+func normalizeConfig(cfg AppConfig) AppConfig {
+	cfg = normalizeTopLevelConfigDefaults(cfg)
+	cfg = normalizeProxyConfigDefaults(cfg)
 	cfg.Debug.PprofAddr = strings.TrimSpace(cfg.Debug.PprofAddr)
 	if cfg.Debug.PprofAddr == "" {
 		cfg.Debug.PprofAddr = "127.0.0.1:6060"
@@ -604,7 +614,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 		cfg.Admin.TokenTTLHours = 24
 	}
 	if strings.TrimSpace(cfg.Admin.StaticDir) == "" {
-		cfg.Admin.StaticDir = "static/admin"
+		cfg.Admin.StaticDir = "frontend/dist/admin"
 	}
 	if cfg.Responses.StoreTTLSeconds <= 0 {
 		cfg.Responses.StoreTTLSeconds = 3600

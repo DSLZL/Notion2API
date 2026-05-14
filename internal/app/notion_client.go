@@ -3012,58 +3012,66 @@ func (c *NotionAIClient) loadAttachmentData(ctx context.Context, input InputAtta
 		return input.Data, name, contentType, nil
 	}
 	if strings.TrimSpace(input.Path) != "" {
-		absPath, err := filepath.Abs(input.Path)
-		if err != nil {
-			return nil, "", "", err
-		}
-		data, err := os.ReadFile(absPath)
-		if err != nil {
-			return nil, "", "", err
-		}
-		if len(data) > maxAttachmentBytes {
-			return nil, "", "", fmt.Errorf("attachment too large: %s", absPath)
-		}
-		if name == "" {
-			name = filepath.Base(absPath)
-		}
-		if contentType == "" {
-			contentType = inferContentTypeFromName(name, false)
-		}
-		return data, name, contentType, nil
+		return loadAttachmentDataFromPath(input.Path, name, contentType)
 	}
 	if strings.TrimSpace(input.URL) != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, input.URL, nil)
-		if err != nil {
-			return nil, "", "", err
-		}
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return nil, "", "", err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-			return nil, "", "", fmt.Errorf("download attachment failed: %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentBytes+1))
-		if err != nil {
-			return nil, "", "", err
-		}
-		if len(data) > maxAttachmentBytes {
-			return nil, "", "", fmt.Errorf("attachment too large: %s", input.URL)
-		}
-		if name == "" {
-			name = inferAttachmentName(input.URL, "", strings.HasPrefix(contentType, "image/"))
-		}
-		if contentType == "" {
-			contentType = normalizeContentType(resp.Header.Get("Content-Type"))
-		}
-		if contentType == "" {
-			contentType = inferContentTypeFromName(name, false)
-		}
-		return data, name, contentType, nil
+		return c.loadAttachmentDataFromURL(ctx, input.URL, name, contentType)
 	}
 	return nil, "", "", fmt.Errorf("attachment has no usable source")
+}
+
+func loadAttachmentDataFromPath(path string, name string, contentType string) ([]byte, string, string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, "", "", err
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if len(data) > maxAttachmentBytes {
+		return nil, "", "", fmt.Errorf("attachment too large: %s", absPath)
+	}
+	if name == "" {
+		name = filepath.Base(absPath)
+	}
+	if contentType == "" {
+		contentType = inferContentTypeFromName(name, false)
+	}
+	return data, name, contentType, nil
+}
+
+func (c *NotionAIClient) loadAttachmentDataFromURL(ctx context.Context, rawURL string, name string, contentType string) ([]byte, string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, "", "", err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, "", "", fmt.Errorf("download attachment failed: %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentBytes+1))
+	if err != nil {
+		return nil, "", "", err
+	}
+	if len(data) > maxAttachmentBytes {
+		return nil, "", "", fmt.Errorf("attachment too large: %s", rawURL)
+	}
+	if name == "" {
+		name = inferAttachmentName(rawURL, "", strings.HasPrefix(contentType, "image/"))
+	}
+	if contentType == "" {
+		contentType = normalizeContentType(resp.Header.Get("Content-Type"))
+	}
+	if contentType == "" {
+		contentType = inferContentTypeFromName(name, false)
+	}
+	return data, name, contentType, nil
 }
 
 func (c *NotionAIClient) validateAttachment(contentType string) error {
@@ -3405,6 +3413,145 @@ func buildContinuationUpdatedConfigValue(draft *continuationTurnDraft) map[strin
 	return value
 }
 
+func mergeInferenceConfigValue(base map[string]any, draft *continuationTurnDraft) map[string]any {
+	configValue := cloneMapAny(base)
+	if draft != nil && len(draft.ConfigValue) > 0 {
+		liveConfig := cloneMapAny(draft.ConfigValue)
+		for key, value := range liveConfig {
+			configValue[key] = value
+		}
+	}
+	for key, value := range base {
+		configValue[key] = value
+	}
+	return configValue
+}
+
+func (c *NotionAIClient) buildInferenceContextValue(
+	draft *continuationTurnDraft,
+	hiddenPrompt string,
+	surface string,
+	originalDatetime string,
+) map[string]any {
+	contextValue := map[string]any{
+		"timezone":        "Asia/Shanghai",
+		"userName":        c.Session.UserName,
+		"userId":          c.Session.UserID,
+		"userEmail":       c.Session.UserEmail,
+		"spaceName":       c.Session.SpaceName,
+		"spaceId":         c.Session.SpaceID,
+		"currentDatetime": originalDatetime,
+		"surface":         surface,
+	}
+	if draft != nil && len(draft.ContextValue) > 0 {
+		liveContext := cloneMapAny(draft.ContextValue)
+		for key, value := range liveContext {
+			contextValue[key] = value
+		}
+	}
+	contextValue["timezone"] = firstNonEmpty(strings.TrimSpace(stringValue(contextValue["timezone"])), "Asia/Shanghai")
+	contextValue["userName"] = firstNonEmpty(strings.TrimSpace(c.Session.UserName), strings.TrimSpace(stringValue(contextValue["userName"])))
+	contextValue["userId"] = firstNonEmpty(strings.TrimSpace(c.Session.UserID), strings.TrimSpace(stringValue(contextValue["userId"])))
+	contextValue["userEmail"] = firstNonEmpty(strings.TrimSpace(c.Session.UserEmail), strings.TrimSpace(stringValue(contextValue["userEmail"])))
+	contextValue["spaceName"] = firstNonEmpty(strings.TrimSpace(c.Session.SpaceName), strings.TrimSpace(stringValue(contextValue["spaceName"])))
+	contextValue["spaceId"] = firstNonEmpty(strings.TrimSpace(c.Session.SpaceID), strings.TrimSpace(stringValue(contextValue["spaceId"])))
+	if spaceViewID := firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), strings.TrimSpace(stringValue(contextValue["spaceViewId"]))); spaceViewID != "" {
+		contextValue["spaceViewId"] = spaceViewID
+	} else {
+		delete(contextValue, "spaceViewId")
+	}
+	contextValue["currentDatetime"] = originalDatetime
+	contextValue["surface"] = surface
+	if draft != nil && hiddenPrompt != "" {
+		contextValue["instructions"] = hiddenPrompt
+		contextValue["runtimePromptHint"] = hiddenPrompt
+	}
+	return contextValue
+}
+
+func buildInitialInferenceTranscript(
+	draft *continuationTurnDraft,
+	configID string,
+	contextID string,
+	configValue map[string]any,
+	contextValue map[string]any,
+) []map[string]any {
+	if draft != nil {
+		return append([]map[string]any{}, buildContinuationBaseTranscript(draft, configValue, contextValue)...)
+	}
+	return []map[string]any{
+		{
+			"id":    configID,
+			"type":  "config",
+			"value": configValue,
+		},
+		{
+			"id":    contextID,
+			"type":  "context",
+			"value": contextValue,
+		},
+	}
+}
+
+func buildHiddenPromptTranscriptItem(hiddenPrompt string) map[string]any {
+	return map[string]any{
+		"id":   randomUUID(),
+		"type": "context",
+		"value": map[string]any{
+			"instructions":      hiddenPrompt,
+			"runtimePromptHint": hiddenPrompt,
+		},
+	}
+}
+
+func buildForceDisableUpstreamEditsTranscriptItem() map[string]any {
+	return map[string]any{
+		"id":   randomUUID(),
+		"type": "updated-config",
+		"value": map[string]any{
+			"useReadOnlyMode":                   true,
+			"writerMode":                        false,
+			"enableUpdatePageAutofixer":         false,
+			"enableUpdatePageOrderUpdates":      false,
+			"enableAgentSupportPropertyReorder": false,
+		},
+	}
+}
+
+func buildAttachmentTranscriptItem(uploaded UploadedAttachment) map[string]any {
+	return map[string]any{
+		"id":          randomUUID(),
+		"type":        "attachment",
+		"fileName":    uploaded.Name,
+		"contentType": uploaded.ContentType,
+		"fileUrl":     uploaded.AttachmentURL,
+		"metadata":    buildAttachmentStepMetadata(uploaded),
+	}
+}
+
+func buildAttachmentPayloads(attachments []UploadedAttachment) []map[string]any {
+	out := make([]map[string]any, 0, len(attachments))
+	for _, item := range attachments {
+		out = append(out, map[string]any{
+			"type":        "attachment",
+			"fileName":    item.Name,
+			"contentType": item.ContentType,
+			"fileUrl":     item.AttachmentURL,
+		})
+	}
+	return out
+}
+
+func buildInferenceUserStep(stepID string, prompt string, userID string, createdAt string) map[string]any {
+	return map[string]any{
+		"id":        stepID,
+		"type":      "user",
+		"value":     [][]string{{prompt}},
+		"userId":    userID,
+		"createdAt": createdAt,
+	}
+}
+
 func countValidNDJSONLines(text string) int {
 	count := 0
 	for _, line := range strings.Split(text, "\n") {
@@ -3466,6 +3613,115 @@ func (c *NotionAIClient) prepareContinuationDraftFromThread(ctx context.Context,
 	return draft, nil
 }
 
+func buildContinuationScaffoldTransactions(
+	threadID string,
+	spaceID string,
+	userID string,
+	createdAt string,
+	createdTime int64,
+	updatedConfigID string,
+	userStepID string,
+	prompt string,
+	updatedConfigValue map[string]any,
+) []map[string]any {
+	return []map[string]any{
+		{
+			"id":      randomUUID(),
+			"spaceId": spaceID,
+			"debug": map[string]any{
+				"userAction": "WorkflowActions.addStepsToExistingThreadAndRun",
+			},
+			"operations": []map[string]any{
+				{
+					"pointer": map[string]any{
+						"table":   "thread_message",
+						"id":      updatedConfigID,
+						"spaceId": spaceID,
+					},
+					"path":    []string{},
+					"command": "set",
+					"args": map[string]any{
+						"id":      updatedConfigID,
+						"version": 1,
+						"step": map[string]any{
+							"id":    updatedConfigID,
+							"type":  "updated-config",
+							"value": updatedConfigValue,
+						},
+						"parent_id":        threadID,
+						"parent_table":     "thread",
+						"space_id":         spaceID,
+						"created_time":     createdTime,
+						"created_by_id":    userID,
+						"created_by_table": "notion_user",
+					},
+				},
+				{
+					"pointer": map[string]any{
+						"table":   "thread_message",
+						"id":      userStepID,
+						"spaceId": spaceID,
+					},
+					"path":    []string{},
+					"command": "set",
+					"args": map[string]any{
+						"id":      userStepID,
+						"version": 1,
+						"step": map[string]any{
+							"id":        userStepID,
+							"type":      "user",
+							"value":     [][]string{{prompt}},
+							"userId":    userID,
+							"createdAt": createdAt,
+						},
+						"parent_id":        threadID,
+						"parent_table":     "thread",
+						"space_id":         spaceID,
+						"created_time":     createdTime,
+						"created_by_id":    userID,
+						"created_by_table": "notion_user",
+					},
+				},
+				{
+					"args": map[string]any{
+						"ids": []string{updatedConfigID, userStepID},
+					},
+					"command": "listAfterMulti",
+					"path":    []string{"messages"},
+					"pointer": map[string]any{
+						"table":   "thread",
+						"id":      threadID,
+						"spaceId": spaceID,
+					},
+				},
+			},
+		},
+		{
+			"id":      randomUUID(),
+			"spaceId": spaceID,
+			"debug": map[string]any{
+				"userAction": "unifiedChatInputActions.updateThreadUpdatedTime",
+			},
+			"operations": []map[string]any{
+				{
+					"pointer": map[string]any{
+						"table":   "thread",
+						"id":      threadID,
+						"spaceId": spaceID,
+					},
+					"path":    []string{},
+					"command": "update",
+					"args": map[string]any{
+						"updated_time":     createdTime + 1,
+						"updated_by_id":    userID,
+						"updated_by_table": "notion_user",
+					},
+				},
+			},
+		},
+	}
+}
+
 func (c *NotionAIClient) saveContinuationScaffold(ctx context.Context, threadID string, prompt string, draft *continuationTurnDraft) (*continuationTurnScaffold, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
@@ -3479,103 +3735,8 @@ func (c *NotionAIClient) saveContinuationScaffold(ctx context.Context, threadID 
 	spaceID := strings.TrimSpace(c.Session.SpaceID)
 	updatedConfigValue := buildContinuationUpdatedConfigValue(draft)
 	payload := map[string]any{
-		"requestId": randomUUID(),
-		"transactions": []map[string]any{
-			{
-				"id":      randomUUID(),
-				"spaceId": spaceID,
-				"debug": map[string]any{
-					"userAction": "WorkflowActions.addStepsToExistingThreadAndRun",
-				},
-				"operations": []map[string]any{
-					{
-						"pointer": map[string]any{
-							"table":   "thread_message",
-							"id":      updatedConfigID,
-							"spaceId": spaceID,
-						},
-						"path":    []string{},
-						"command": "set",
-						"args": map[string]any{
-							"id":      updatedConfigID,
-							"version": 1,
-							"step": map[string]any{
-								"id":    updatedConfigID,
-								"type":  "updated-config",
-								"value": updatedConfigValue,
-							},
-							"parent_id":        threadID,
-							"parent_table":     "thread",
-							"space_id":         spaceID,
-							"created_time":     createdTime,
-							"created_by_id":    userID,
-							"created_by_table": "notion_user",
-						},
-					},
-					{
-						"pointer": map[string]any{
-							"table":   "thread_message",
-							"id":      userStepID,
-							"spaceId": spaceID,
-						},
-						"path":    []string{},
-						"command": "set",
-						"args": map[string]any{
-							"id":      userStepID,
-							"version": 1,
-							"step": map[string]any{
-								"id":        userStepID,
-								"type":      "user",
-								"value":     [][]string{{prompt}},
-								"userId":    userID,
-								"createdAt": createdAt,
-							},
-							"parent_id":        threadID,
-							"parent_table":     "thread",
-							"space_id":         spaceID,
-							"created_time":     createdTime,
-							"created_by_id":    userID,
-							"created_by_table": "notion_user",
-						},
-					},
-					{
-						"args": map[string]any{
-							"ids": []string{updatedConfigID, userStepID},
-						},
-						"command": "listAfterMulti",
-						"path":    []string{"messages"},
-						"pointer": map[string]any{
-							"table":   "thread",
-							"id":      threadID,
-							"spaceId": spaceID,
-						},
-					},
-				},
-			},
-			{
-				"id":      randomUUID(),
-				"spaceId": spaceID,
-				"debug": map[string]any{
-					"userAction": "unifiedChatInputActions.updateThreadUpdatedTime",
-				},
-				"operations": []map[string]any{
-					{
-						"pointer": map[string]any{
-							"table":   "thread",
-							"id":      threadID,
-							"spaceId": spaceID,
-						},
-						"path":    []string{},
-						"command": "update",
-						"args": map[string]any{
-							"updated_time":     createdTime + 1,
-							"updated_by_id":    userID,
-							"updated_by_table": "notion_user",
-						},
-					},
-				},
-			},
-		},
+		"requestId":    randomUUID(),
+		"transactions": buildContinuationScaffoldTransactions(threadID, spaceID, userID, createdAt, createdTime, updatedConfigID, userStepID, prompt, updatedConfigValue),
 	}
 	if _, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json"); err != nil {
 		return nil, err
@@ -3600,17 +3761,8 @@ func (c *NotionAIClient) buildInferencePayload(req PromptRunRequest, threadID st
 	if len(attachments) > 0 {
 		surface = "workflows"
 	}
-	configValue := c.buildDefaultWorkflowConfigValue(threadType, req.UseWebSearch, req.NotionModel)
-	if req.continuationDraft != nil && len(req.continuationDraft.ConfigValue) > 0 {
-		liveConfig := cloneMapAny(req.continuationDraft.ConfigValue)
-		for key, value := range liveConfig {
-			configValue[key] = value
-		}
-	}
 	defaultConfig := c.buildDefaultWorkflowConfigValue(threadType, req.UseWebSearch, req.NotionModel)
-	for key, value := range defaultConfig {
-		configValue[key] = value
-	}
+	configValue := mergeInferenceConfigValue(defaultConfig, req.continuationDraft)
 	configID := randomUUID()
 	contextID := randomUUID()
 	originalDatetime := now
@@ -3621,78 +3773,13 @@ func (c *NotionAIClient) buildInferencePayload(req PromptRunRequest, threadID st
 			originalDatetime = clean
 		}
 	}
-	contextValue := map[string]any{
-		"timezone":        "Asia/Shanghai",
-		"userName":        c.Session.UserName,
-		"userId":          c.Session.UserID,
-		"userEmail":       c.Session.UserEmail,
-		"spaceName":       c.Session.SpaceName,
-		"spaceId":         c.Session.SpaceID,
-		"currentDatetime": originalDatetime,
-		"surface":         surface,
+	contextValue := c.buildInferenceContextValue(req.continuationDraft, hiddenPrompt, surface, originalDatetime)
+	transcript := buildInitialInferenceTranscript(req.continuationDraft, configID, contextID, configValue, contextValue)
+	if req.continuationDraft == nil && hiddenPrompt != "" {
+		transcript = append(transcript, buildHiddenPromptTranscriptItem(hiddenPrompt))
 	}
-	if req.continuationDraft != nil && len(req.continuationDraft.ContextValue) > 0 {
-		liveContext := cloneMapAny(req.continuationDraft.ContextValue)
-		for key, value := range liveContext {
-			contextValue[key] = value
-		}
-	}
-	contextValue["timezone"] = firstNonEmpty(strings.TrimSpace(stringValue(contextValue["timezone"])), "Asia/Shanghai")
-	contextValue["userName"] = firstNonEmpty(strings.TrimSpace(c.Session.UserName), strings.TrimSpace(stringValue(contextValue["userName"])))
-	contextValue["userId"] = firstNonEmpty(strings.TrimSpace(c.Session.UserID), strings.TrimSpace(stringValue(contextValue["userId"])))
-	contextValue["userEmail"] = firstNonEmpty(strings.TrimSpace(c.Session.UserEmail), strings.TrimSpace(stringValue(contextValue["userEmail"])))
-	contextValue["spaceName"] = firstNonEmpty(strings.TrimSpace(c.Session.SpaceName), strings.TrimSpace(stringValue(contextValue["spaceName"])))
-	contextValue["spaceId"] = firstNonEmpty(strings.TrimSpace(c.Session.SpaceID), strings.TrimSpace(stringValue(contextValue["spaceId"])))
-	if spaceViewID := firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), strings.TrimSpace(stringValue(contextValue["spaceViewId"]))); spaceViewID != "" {
-		contextValue["spaceViewId"] = spaceViewID
-	} else {
-		delete(contextValue, "spaceViewId")
-	}
-	contextValue["currentDatetime"] = originalDatetime
-	contextValue["surface"] = surface
-	if req.continuationDraft != nil && hiddenPrompt != "" {
-		contextValue["instructions"] = hiddenPrompt
-		contextValue["runtimePromptHint"] = hiddenPrompt
-	}
-	transcript := []map[string]any{}
-	if req.continuationDraft != nil {
-		transcript = append(transcript, buildContinuationBaseTranscript(req.continuationDraft, configValue, contextValue)...)
-	} else {
-		transcript = append(transcript,
-			map[string]any{
-				"id":    configID,
-				"type":  "config",
-				"value": configValue,
-			},
-			map[string]any{
-				"id":    contextID,
-				"type":  "context",
-				"value": contextValue,
-			},
-		)
-		if hiddenPrompt != "" {
-			transcript = append(transcript, map[string]any{
-				"id":   randomUUID(),
-				"type": "context",
-				"value": map[string]any{
-					"instructions":      hiddenPrompt,
-					"runtimePromptHint": hiddenPrompt,
-				},
-			})
-		}
-		if c.Config.Features.ForceDisableUpstreamEdits {
-			transcript = append(transcript, map[string]any{
-				"id":   randomUUID(),
-				"type": "updated-config",
-				"value": map[string]any{
-					"useReadOnlyMode":                   true,
-					"writerMode":                        false,
-					"enableUpdatePageAutofixer":         false,
-					"enableUpdatePageOrderUpdates":      false,
-					"enableAgentSupportPropertyReorder": false,
-				},
-			})
-		}
+	if req.continuationDraft == nil && c.Config.Features.ForceDisableUpstreamEdits {
+		transcript = append(transcript, buildForceDisableUpstreamEditsTranscriptItem())
 	}
 	if req.continuationScaffold != nil {
 		if clean := strings.TrimSpace(req.continuationScaffold.UpdatedConfigID); clean != "" {
@@ -3703,14 +3790,7 @@ func (c *NotionAIClient) buildInferencePayload(req PromptRunRequest, threadID st
 		}
 	}
 	for _, item := range attachments {
-		transcript = append(transcript, map[string]any{
-			"id":          randomUUID(),
-			"type":        "attachment",
-			"fileName":    item.Name,
-			"contentType": item.ContentType,
-			"fileUrl":     item.AttachmentURL,
-			"metadata":    buildAttachmentStepMetadata(item),
-		})
+		transcript = append(transcript, buildAttachmentTranscriptItem(item))
 	}
 	userStepID := randomUUID()
 	userCreatedAt := now
@@ -3722,23 +3802,8 @@ func (c *NotionAIClient) buildInferencePayload(req PromptRunRequest, threadID st
 			userCreatedAt = clean
 		}
 	}
-	userStep := map[string]any{
-		"id":        userStepID,
-		"type":      "user",
-		"value":     [][]string{{req.Prompt}},
-		"userId":    c.Session.UserID,
-		"createdAt": userCreatedAt,
-	}
-	transcript = append(transcript, userStep)
-	attachmentPayloads := make([]map[string]any, 0, len(attachments))
-	for _, item := range attachments {
-		attachmentPayloads = append(attachmentPayloads, map[string]any{
-			"type":        "attachment",
-			"fileName":    item.Name,
-			"contentType": item.ContentType,
-			"fileUrl":     item.AttachmentURL,
-		})
-	}
+	transcript = append(transcript, buildInferenceUserStep(userStepID, req.Prompt, c.Session.UserID, userCreatedAt))
+	attachmentPayloads := buildAttachmentPayloads(attachments)
 	payload := map[string]any{
 		"spaceId":                       c.Session.SpaceID,
 		"threadId":                      threadID,

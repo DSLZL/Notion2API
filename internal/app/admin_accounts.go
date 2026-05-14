@@ -25,6 +25,34 @@ type manualAccountImportRequest struct {
 	Active        bool   `json:"active"`
 }
 
+func (a *App) requireAdminPostBody(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
+	if !a.adminAuthOK(w, r) {
+		return nil, false
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
+		return nil, false
+	}
+	payload, err := a.decodeBody(w, r)
+	if err != nil {
+		writeInvalidBodyError(w, err)
+		return nil, false
+	}
+	return payload, true
+}
+
+func (a *App) writeAccountStatusSuccess(w http.ResponseWriter, cfg AppConfig, account NotionAccount, status LoginStatusFile) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"account": a.accountRuntimeSummary(cfg, account),
+		"status":  status,
+	})
+}
+
+func writeAccountGatewayError(w http.ResponseWriter, account NotionAccount) {
+	writeJSON(w, http.StatusBadGateway, map[string]any{"detail": account.LastError, "account": account.Email})
+}
+
 func parseManualImportProbeJSON(raw string) (probePayload, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -747,18 +775,11 @@ func buildImportedSession(ctx context.Context, cfg AppConfig, req manualAccountI
 }
 
 func (a *App) handleAdminAccountManualImport(w http.ResponseWriter, r *http.Request) {
-	if !a.adminAuthOK(w, r) {
+	payload, ok := a.requireAdminPostBody(w, r)
+	if !ok {
 		return
 	}
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
-		return
-	}
-	payload, err := a.decodeBody(w, r)
-	if err != nil {
-		writeInvalidBodyError(w, err)
-		return
-	}
+	var err error
 	req, err := decodeManualImportRequest(payload)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
@@ -831,26 +852,15 @@ func (a *App) handleAdminAccountManualImport(w http.ResponseWriter, r *http.Requ
 	a.invalidateDispatchProbeCache()
 	cfg, _, _ = a.State.Snapshot()
 	account, _, _ = cfg.FindAccount(accountEmail)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"account": a.accountRuntimeSummary(cfg, account),
-		"status":  status,
-	})
+	a.writeAccountStatusSuccess(w, cfg, account, status)
 }
 
 func (a *App) handleAdminAccountLoginStart(w http.ResponseWriter, r *http.Request) {
-	if !a.adminAuthOK(w, r) {
+	payload, ok := a.requireAdminPostBody(w, r)
+	if !ok {
 		return
 	}
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
-		return
-	}
-	payload, err := a.decodeBody(w, r)
-	if err != nil {
-		writeInvalidBodyError(w, err)
-		return
-	}
+	var err error
 	email := strings.TrimSpace(stringValue(payload["email"]))
 	if email == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "email is required"})
@@ -887,7 +897,7 @@ func (a *App) handleAdminAccountLoginStart(w http.ResponseWriter, r *http.Reques
 		account.LastError = firstNonEmpty(status.Error, status.Message, err.Error())
 		cfg.UpsertAccount(account)
 		_ = a.State.SaveAndApply(cfg)
-		writeJSON(w, http.StatusBadGateway, map[string]any{"detail": account.LastError, "account": account.Email})
+		writeAccountGatewayError(w, account)
 		return
 	}
 	account = mergeAccountWithStatus(cfg, account, status)
@@ -899,26 +909,15 @@ func (a *App) handleAdminAccountLoginStart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	a.invalidateDispatchProbeCache()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"account": a.accountRuntimeSummary(cfg, account),
-		"status":  status,
-	})
+	a.writeAccountStatusSuccess(w, cfg, account, status)
 }
 
 func (a *App) handleAdminAccountLoginVerify(w http.ResponseWriter, r *http.Request) {
-	if !a.adminAuthOK(w, r) {
+	payload, ok := a.requireAdminPostBody(w, r)
+	if !ok {
 		return
 	}
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"detail": "method not allowed"})
-		return
-	}
-	payload, err := a.decodeBody(w, r)
-	if err != nil {
-		writeInvalidBodyError(w, err)
-		return
-	}
+	var err error
 	email := strings.TrimSpace(stringValue(payload["email"]))
 	code := strings.TrimSpace(stringValue(payload["code"]))
 	if email == "" || code == "" {
@@ -954,7 +953,7 @@ func (a *App) handleAdminAccountLoginVerify(w http.ResponseWriter, r *http.Reque
 		account.LastError = firstNonEmpty(status.Error, status.Message, err.Error())
 		cfg.UpsertAccount(account)
 		_ = a.State.SaveAndApply(cfg)
-		writeJSON(w, http.StatusBadGateway, map[string]any{"detail": account.LastError, "account": account.Email})
+		writeAccountGatewayError(w, account)
 		return
 	}
 
@@ -974,11 +973,7 @@ func (a *App) handleAdminAccountLoginVerify(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	a.invalidateDispatchProbeCache()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"account": a.accountRuntimeSummary(cfg, account),
-		"status":  status,
-	})
+	a.writeAccountStatusSuccess(w, cfg, account, status)
 }
 
 func (a *App) handleAdminAccountLoginStatus(w http.ResponseWriter, r *http.Request) {

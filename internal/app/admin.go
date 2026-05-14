@@ -39,9 +39,12 @@ const welcomeHTML = `<!DOCTYPE html>
 func resolveStaticAdminDir(preferred string) string {
 	preferred = strings.TrimSpace(preferred)
 	if preferred == "" {
-		preferred = "static/admin"
+		preferred = "frontend/dist/admin"
 	}
-	candidates := []string{preferred}
+	candidates := []string{
+		preferred,
+		"frontend/dist/admin",
+	}
 	if override := strings.TrimSpace(os.Getenv("NOTION2API_STATIC_ADMIN_DIR")); override != "" {
 		candidates = append([]string{override}, candidates...)
 	}
@@ -384,37 +387,51 @@ func redactConfigSecrets(cfg AppConfig) AppConfig {
 	return cfg
 }
 
+func adminSecretsPayload(cfg AppConfig) map[string]any {
+	return map[string]any{
+		"api_key_set":           strings.TrimSpace(cfg.APIKey) != "",
+		"admin_password_set":    strings.TrimSpace(cfg.Admin.Password) != "",
+		"resin_proxy_token_set": strings.TrimSpace(cfg.ResinProxyToken) != "",
+	}
+}
+
+func adminSessionPayload(session SessionInfo) map[string]any {
+	return map[string]any{
+		"probe_path":     session.ProbePath,
+		"client_version": session.ClientVersion,
+		"user_id":        session.UserID,
+		"user_email":     session.UserEmail,
+		"user_name":      session.UserName,
+		"space_id":       session.SpaceID,
+		"space_name":     session.SpaceName,
+		"cookie_count":   len(session.Cookies),
+	}
+}
+
+func (a *App) adminSessionRuntime() (bool, string, string) {
+	a.State.mu.RLock()
+	defer a.State.mu.RUnlock()
+	return a.State.Client != nil, formatTimeOrEmpty(a.State.LastSessionRefresh), a.State.LastSessionRefreshError
+}
+
+func writeNoStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+}
+
 func (a *App) getConfigPayload() map[string]any {
 	cfg, session, registry := a.State.Snapshot()
-	a.State.mu.RLock()
-	sessionReady := a.State.Client != nil
-	lastRefresh := a.State.LastSessionRefresh
-	lastRefreshError := a.State.LastSessionRefreshError
-	a.State.mu.RUnlock()
+	sessionReady, lastRefreshAt, lastRefreshError := a.adminSessionRuntime()
 	safeConfig := redactConfigSecrets(cfg)
 	return map[string]any{
 		"success":        true,
 		"config":         safeConfig,
 		"config_path":    cfg.ConfigPath,
 		"active_account": cfg.ActiveAccount,
-		"secrets": map[string]any{
-			"api_key_set":           strings.TrimSpace(cfg.APIKey) != "",
-			"admin_password_set":    strings.TrimSpace(cfg.Admin.Password) != "",
-			"resin_proxy_token_set": strings.TrimSpace(cfg.ResinProxyToken) != "",
-		},
-		"session_ready": sessionReady,
-		"session": map[string]any{
-			"probe_path":     session.ProbePath,
-			"client_version": session.ClientVersion,
-			"user_id":        session.UserID,
-			"user_email":     session.UserEmail,
-			"user_name":      session.UserName,
-			"space_id":       session.SpaceID,
-			"space_name":     session.SpaceName,
-			"cookie_count":   len(session.Cookies),
-		},
+		"secrets":        adminSecretsPayload(cfg),
+		"session_ready":  sessionReady,
+		"session":        adminSessionPayload(session),
 		"session_refresh_runtime": map[string]any{
-			"last_refresh_at": formatTimeOrEmpty(lastRefresh),
+			"last_refresh_at": lastRefreshAt,
 			"last_error":      lastRefreshError,
 		},
 		"models":        registry.Entries,
@@ -424,11 +441,7 @@ func (a *App) getConfigPayload() map[string]any {
 
 func (a *App) getSettingsPayload() map[string]any {
 	cfg, session, registry := a.State.Snapshot()
-	a.State.mu.RLock()
-	sessionReady := a.State.Client != nil
-	lastRefresh := a.State.LastSessionRefresh
-	lastRefreshError := a.State.LastSessionRefreshError
-	a.State.mu.RUnlock()
+	sessionReady, lastRefreshAt, lastRefreshError := a.adminSessionRuntime()
 	safeConfig := redactConfigSecrets(cfg)
 	return map[string]any{
 		"success": true,
@@ -439,11 +452,7 @@ func (a *App) getSettingsPayload() map[string]any {
 			"token_ttl_hours": cfg.Admin.TokenTTLHours,
 			"static_dir":      cfg.Admin.StaticDir,
 		},
-		"secrets": map[string]any{
-			"api_key_set":           strings.TrimSpace(cfg.APIKey) != "",
-			"admin_password_set":    strings.TrimSpace(cfg.Admin.Password) != "",
-			"resin_proxy_token_set": strings.TrimSpace(cfg.ResinProxyToken) != "",
-		},
+		"secrets": adminSecretsPayload(cfg),
 		"runtime": map[string]any{
 			"timeout_sec":        cfg.TimeoutSec,
 			"poll_interval_sec":  cfg.PollIntervalSec,
@@ -464,7 +473,7 @@ func (a *App) getSettingsPayload() map[string]any {
 			"space_name": session.SpaceName,
 		},
 		"session_refresh_runtime": map[string]any{
-			"last_refresh_at": formatTimeOrEmpty(lastRefresh),
+			"last_refresh_at": lastRefreshAt,
 			"last_error":      lastRefreshError,
 		},
 	}
@@ -842,7 +851,7 @@ func (a *App) serveAdminStatic(w http.ResponseWriter, r *http.Request) {
 	cfg, _, _ := a.State.Snapshot()
 	staticDir := resolveStaticAdminDir(cfg.Admin.StaticDir)
 	if stat, err := os.Stat(staticDir); err != nil || !stat.IsDir() {
-		http.Error(w, "WebUI not found. Expected static files under static/admin.", http.StatusNotFound)
+		http.Error(w, "WebUI not found. Expected static files under frontend/dist/admin.", http.StatusNotFound)
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/admin")
@@ -857,7 +866,7 @@ func (a *App) serveAdminStatic(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(path, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			} else {
-				w.Header().Set("Cache-Control", "no-store, must-revalidate")
+				writeNoStore(w)
 			}
 			http.ServeFile(w, r, full)
 			return
@@ -870,7 +879,7 @@ func (a *App) serveAdminStatic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index.html not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	writeNoStore(w)
 	http.ServeFile(w, r, index)
 }
 

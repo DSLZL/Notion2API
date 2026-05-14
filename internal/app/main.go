@@ -122,6 +122,14 @@ type continuationTarget struct {
 	Session      *conversationContinuationState
 }
 
+type apiRequestContext struct {
+	cfg                     AppConfig
+	entry                   ModelDefinition
+	preferredConversationID string
+	explicitThreadID        string
+	requestedAccount        string
+}
+
 type panicSafeResponseWriter struct {
 	http.ResponseWriter
 	status      int
@@ -1234,6 +1242,78 @@ func forceFreshThreadPerRequest(cfg AppConfig) bool {
 	return cfg.Features.ForceFreshThreadPerRequest
 }
 
+func (a *App) buildTypedAPIRequestContext(
+	w http.ResponseWriter,
+	r *http.Request,
+	model string,
+	metadata any,
+	conversationID string,
+	conversation string,
+	threadID string,
+	thread string,
+	notionThreadID string,
+	accountEmail string,
+	notionAccountEmail string,
+) (apiRequestContext, bool) {
+	cfg, _, registry := a.State.Snapshot()
+	requestedModelID := requestedModelFromTyped(model, cfg.DefaultPublicModel())
+	requestedAccount := requestedAccountEmailFromTyped(r, accountEmail, notionAccountEmail, metadata)
+	entry, err := registry.Resolve(requestedModelID, cfg.DefaultPublicModel())
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "model_not_found")
+		return apiRequestContext{}, false
+	}
+	return apiRequestContext{
+		cfg:                     cfg,
+		entry:                   entry,
+		preferredConversationID: requestedConversationIDFromTyped(r, conversationID, conversation, metadata),
+		explicitThreadID:        requestedThreadIDFromTyped(r, threadID, thread, notionThreadID, metadata),
+		requestedAccount:        requestedAccount,
+	}, true
+}
+
+func buildPromptRunRequest(normalized NormalizedInput, entry ModelDefinition, useWebSearch bool) (PromptRunRequest, string, string, string) {
+	hiddenPrompt := strings.TrimSpace(normalized.HiddenPrompt)
+	promptText := normalized.Prompt
+	latestPrompt := resolveRequestPromptForContinuation(normalized)
+	return PromptRunRequest{
+		Prompt:             promptText,
+		LatestUserPrompt:   latestPrompt,
+		HiddenPrompt:       hiddenPrompt,
+		PublicModel:        entry.ID,
+		NotionModel:        entry.NotionModel,
+		UseWebSearch:       useWebSearch,
+		Attachments:        normalized.Attachments,
+		SessionFingerprint: canonicalConversationFingerprint(hiddenPrompt, normalized.Segments),
+		RawMessageCount:    sessionRawMessageCount(normalized.Segments),
+	}, hiddenPrompt, promptText, latestPrompt
+}
+
+func applyContinuationTargetToRequest(
+	request *PromptRunRequest,
+	conversation *ConversationEntry,
+	matched continuationTarget,
+	freshThreadMode bool,
+	requestedAccount string,
+	latestPrompt string,
+	promptText string,
+	attachments []InputAttachment,
+) {
+	*conversation = matched.Conversation
+	request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccount)
+	if freshThreadMode {
+		request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
+		request.Prompt = buildFreshThreadReplayPromptFromConversation(*conversation, latestPrompt, attachments, promptText)
+		return
+	}
+	request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
+	request.continuationDraft = buildContinuationDraft(matched.Session)
+	if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
+		request.SessionRepeatTurn = true
+	}
+	request.Prompt = latestPrompt
+}
+
 func latestReplayPrompt(latestPrompt string, attachments []InputAttachment, fallback string) string {
 	clean := strings.TrimSpace(latestPrompt)
 	if clean == "" && len(attachments) > 0 {
@@ -1665,54 +1745,35 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "messages must contain text or supported attachments", "invalid_request_error", nilString())
 		return
 	}
-	cfg, _, registry := a.State.Snapshot()
-	requestedModelID := requestedModelFromTyped(typed.Model, cfg.DefaultPublicModel())
-	useWebSearch := requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, cfg.Features.UseWebSearch)
-	preferredConversationID := requestedConversationIDFromTyped(r, typed.ConversationID, typed.Conversation, typed.Metadata)
-	explicitThreadID := requestedThreadIDFromTyped(r, typed.ThreadID, typed.Thread, typed.NotionThreadID, typed.Metadata)
-	requestedAccount := requestedAccountEmailFromTyped(r, typed.AccountEmail, typed.NotionAccountEmail, typed.Metadata)
-	entry, err := registry.Resolve(requestedModelID, cfg.DefaultPublicModel())
-	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "model_not_found")
+	reqCtx, ok := a.buildTypedAPIRequestContext(
+		w, r,
+		typed.Model,
+		typed.Metadata,
+		typed.ConversationID,
+		typed.Conversation,
+		typed.ThreadID,
+		typed.Thread,
+		typed.NotionThreadID,
+		typed.AccountEmail,
+		typed.NotionAccountEmail,
+	)
+	if !ok {
 		return
 	}
-	hiddenPrompt := strings.TrimSpace(normalized.HiddenPrompt)
-	promptText := normalized.Prompt
-	latestPrompt := resolveRequestPromptForContinuation(normalized)
-	originalFingerprint := canonicalConversationFingerprint(hiddenPrompt, normalized.Segments)
-	originalRawMessageCount := sessionRawMessageCount(normalized.Segments)
-	request := PromptRunRequest{
-		Prompt:             promptText,
-		LatestUserPrompt:   latestPrompt,
-		HiddenPrompt:       hiddenPrompt,
-		PublicModel:        entry.ID,
-		NotionModel:        entry.NotionModel,
-		UseWebSearch:       useWebSearch,
-		Attachments:        normalized.Attachments,
-		SessionFingerprint: originalFingerprint,
-		RawMessageCount:    originalRawMessageCount,
-	}
-	freshThreadMode := forceFreshThreadPerRequest(cfg)
+	request, hiddenPrompt, promptText, latestPrompt := buildPromptRunRequest(
+		normalized,
+		reqCtx.entry,
+		requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, reqCtx.cfg.Features.UseWebSearch),
+	)
+	freshThreadMode := forceFreshThreadPerRequest(reqCtx.cfg)
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveContinuationConversationWithExplicit("", hiddenPrompt, normalized.Segments, preferredConversationID, explicitThreadID); ok {
-		conversation = matched.Conversation
-		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccount)
-		if freshThreadMode {
-			request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
-			request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, latestPrompt, normalized.Attachments, promptText)
-		} else {
-			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-			request.continuationDraft = buildContinuationDraft(matched.Session)
-			if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
-				request.SessionRepeatTurn = true
-			}
-			request.Prompt = latestPrompt
-		}
+	if matched, ok := a.resolveContinuationConversationWithExplicit("", hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
+		applyContinuationTargetToRequest(&request, &conversation, matched, freshThreadMode, reqCtx.requestedAccount, latestPrompt, promptText, normalized.Attachments)
 	} else {
-		request.PinnedAccountEmail = requestedAccount
+		request.PinnedAccountEmail = reqCtx.requestedAccount
 	}
-	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), preferredConversationID)
-	conversationID := a.startConversationTurn(conversation.ID, preferredConversationID, "api", "chat_completions", resolveRequestPromptForContinuation(normalized), request)
+	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), reqCtx.preferredConversationID)
+	conversationID := a.startConversationTurn(conversation.ID, reqCtx.preferredConversationID, "api", "chat_completions", latestPrompt, request)
 	setConversationIDHeader(w, conversationID)
 	stream := typed.Stream
 	if stream {
@@ -1720,7 +1781,7 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if typed.StreamIncludeUsage != nil {
 			includeUsage = *typed.StreamIncludeUsage
 		}
-		a.writeChatCompletionLiveStream(w, r, request, entry.ID, includeUsage, conversationID)
+		a.writeChatCompletionLiveStream(w, r, request, reqCtx.entry.ID, includeUsage, conversationID)
 		return
 	}
 	result, err := a.runPrompt(r, request)
@@ -1730,7 +1791,7 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result = applyInferenceResultOutputPolicy(result, request)
-	responsePayload := buildChatCompletion(result, entry.ID, cfg.DebugUpstream)
+	responsePayload := buildChatCompletion(result, reqCtx.entry.ID, reqCtx.cfg.DebugUpstream)
 	attachConversationResponseMetadata(responsePayload, conversationID, result.ThreadID)
 	setThreadIDHeader(w, result.ThreadID)
 	a.markConversationEnvelope(conversationID, "", stringValue(responsePayload["id"]))
@@ -1882,60 +1943,41 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "input must contain text or supported attachments", "invalid_request_error", nilString())
 		return
 	}
-	cfg, _, registry := a.State.Snapshot()
-	requestedModelID := requestedModelFromTyped(typed.Model, cfg.DefaultPublicModel())
-	useWebSearch := requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, cfg.Features.UseWebSearch)
-	preferredConversationID := requestedConversationIDFromTyped(r, typed.ConversationID, typed.Conversation, typed.Metadata)
-	explicitThreadID := requestedThreadIDFromTyped(r, typed.ThreadID, typed.Thread, typed.NotionThreadID, typed.Metadata)
-	requestedAccount := requestedAccountEmailFromTyped(r, typed.AccountEmail, typed.NotionAccountEmail, typed.Metadata)
-	entry, err := registry.Resolve(requestedModelID, cfg.DefaultPublicModel())
-	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "model_not_found")
+	reqCtx, ok := a.buildTypedAPIRequestContext(
+		w, r,
+		typed.Model,
+		typed.Metadata,
+		typed.ConversationID,
+		typed.Conversation,
+		typed.ThreadID,
+		typed.Thread,
+		typed.NotionThreadID,
+		typed.AccountEmail,
+		typed.NotionAccountEmail,
+	)
+	if !ok {
 		return
 	}
-	hiddenPrompt := strings.TrimSpace(normalized.HiddenPrompt)
-	promptText := normalized.Prompt
-	latestPrompt := resolveRequestPromptForContinuation(normalized)
-	originalFingerprint := canonicalConversationFingerprint(hiddenPrompt, normalized.Segments)
-	originalRawMessageCount := sessionRawMessageCount(normalized.Segments)
-	request := PromptRunRequest{
-		Prompt:             promptText,
-		LatestUserPrompt:   latestPrompt,
-		HiddenPrompt:       hiddenPrompt,
-		PublicModel:        entry.ID,
-		NotionModel:        entry.NotionModel,
-		UseWebSearch:       useWebSearch,
-		Attachments:        normalized.Attachments,
-		SessionFingerprint: originalFingerprint,
-		RawMessageCount:    originalRawMessageCount,
-	}
-	freshThreadMode := forceFreshThreadPerRequest(cfg)
+	request, hiddenPrompt, promptText, latestPrompt := buildPromptRunRequest(
+		normalized,
+		reqCtx.entry,
+		requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, reqCtx.cfg.Features.UseWebSearch),
+	)
+	freshThreadMode := forceFreshThreadPerRequest(reqCtx.cfg)
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveContinuationConversationWithExplicit(previousResponseID, hiddenPrompt, normalized.Segments, preferredConversationID, explicitThreadID); ok {
-		conversation = matched.Conversation
-		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccount)
-		if freshThreadMode {
-			request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
-			request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, latestPrompt, normalized.Attachments, promptText)
-		} else {
-			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-			request.continuationDraft = buildContinuationDraft(matched.Session)
-			if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
-				request.SessionRepeatTurn = true
-			}
-			request.Prompt = latestPrompt
-		}
+	if matched, ok := a.resolveContinuationConversationWithExplicit(previousResponseID, hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
+		applyContinuationTargetToRequest(&request, &conversation, matched, freshThreadMode, reqCtx.requestedAccount, latestPrompt, promptText, normalized.Attachments)
 	} else {
-		request.PinnedAccountEmail = requestedAccount
+		request.PinnedAccountEmail = reqCtx.requestedAccount
 	}
 	if freshThreadMode && strings.TrimSpace(conversation.ID) == "" {
 		request.Prompt = buildFreshThreadReplayPromptFromStoredResponse(normalized.PreviousResponsePrompt, latestPrompt, normalized.Attachments, request.Prompt)
 	}
-	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), preferredConversationID)
-	conversationID := a.startConversationTurn(conversation.ID, preferredConversationID, "api", "responses", resolveRequestPromptForContinuation(normalized), request)
+	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), reqCtx.preferredConversationID)
+	conversationID := a.startConversationTurn(conversation.ID, reqCtx.preferredConversationID, "api", "responses", latestPrompt, request)
 	setConversationIDHeader(w, conversationID)
 	if stream {
-		a.writeResponsesLiveStream(w, r, request, entry.ID, cfg.DebugUpstream, conversationID)
+		a.writeResponsesLiveStream(w, r, request, reqCtx.entry.ID, reqCtx.cfg.DebugUpstream, conversationID)
 		return
 	}
 	result, err := a.runPrompt(r, request)
@@ -1947,8 +1989,8 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 	result = applyInferenceResultOutputPolicy(result, request)
 	responsePayload := buildResponsesOutputWithIDs(
 		result,
-		entry.ID,
-		cfg.DebugUpstream,
+		reqCtx.entry.ID,
+		reqCtx.cfg.DebugUpstream,
 		"resp_"+strings.ReplaceAll(randomUUID(), "-", ""),
 		"msg_"+strings.ReplaceAll(randomUUID(), "-", ""),
 		time.Now().Unix(),
@@ -2011,31 +2053,23 @@ func (a *App) writeChatCompletionStream(w http.ResponseWriter, r *http.Request, 
 	reasoningText := sanitizeAssistantVisibleText(result.Reasoning)
 
 	chunks := []map[string]any{
-		buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamDeltaChoice(0, map[string]any{"role": "assistant"}),
-		}, nil),
+		buildChatStreamRoleChunk(completionID, created, modelID),
 	}
 	cfg, _, _ := a.State.Snapshot()
 	for _, part := range splitTextChunks(reasoningText, cfg.StreamChunkRunes) {
 		if part == "" {
 			continue
 		}
-		chunks = append(chunks, buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamReasoningChoice(0, part),
-		}, nil))
+		chunks = append(chunks, buildChatStreamReasoningChunk(completionID, created, modelID, part))
 	}
 	for _, part := range splitTextChunks(assistantText, cfg.StreamChunkRunes) {
-		chunks = append(chunks, buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamDeltaChoice(0, map[string]any{"content": part}),
-		}, nil))
+		chunks = append(chunks, buildChatStreamContentChunk(completionID, created, modelID, part))
 	}
 	finalUsage := map[string]any{}
 	if includeUsage {
 		finalUsage = buildUsage(result.Prompt, assistantText, reasoningText)
 	}
-	chunks = append(chunks, buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-		buildChatStreamFinishChoice(0, "stop"),
-	}, finalUsage))
+	chunks = append(chunks, buildChatStreamFinishChunk(completionID, created, modelID, finalUsage))
 
 	for _, chunk := range chunks {
 		if err := writeSSEData(w, flusher, chunk); err != nil {
@@ -2051,9 +2085,8 @@ func (a *App) writeChatCompletionStream(w http.ResponseWriter, r *http.Request, 
 }
 
 func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Request, request PromptRunRequest, modelID string, includeUsage bool, conversationID string) {
-	flusher, ok := w.(http.Flusher)
+	flusher, ok := requireSSEFlusher(w)
 	if !ok {
-		writeOpenAIError(w, http.StatusInternalServerError, "streaming is not supported by this response writer", "api_error", "stream_unsupported")
 		return
 	}
 
@@ -2084,9 +2117,7 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 		headersSent = true
 		prepareOpenAISSEHeaders(w)
 		a.markConversationEnvelope(conversationID, "", completionID)
-		return writeSSEData(w, flusher, buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamDeltaChoice(0, map[string]any{"role": "assistant"}),
-		}, nil))
+		return writeSSEData(w, flusher, buildChatStreamRoleChunk(completionID, created, modelID))
 	}
 	emitContent := func(part string) error {
 		if part == "" {
@@ -2096,9 +2127,7 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		emittedVisibleText.WriteString(part)
-		return safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamDeltaChoice(0, map[string]any{"content": part}),
-		}, nil))
+		return safeWriteData(buildChatStreamContentChunk(completionID, created, modelID, part))
 	}
 	emitReasoning := func(part string) error {
 		if part == "" || request.SuppressReasoningOutput {
@@ -2108,9 +2137,7 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		emittedReasoning.WriteString(part)
-		return safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamReasoningChoice(0, part),
-		}, nil))
+		return safeWriteData(buildChatStreamReasoningChunk(completionID, created, modelID, part))
 	}
 	emitReasoningWarmup := func() error {
 		if !request.StreamReasoningWarmup || request.SuppressReasoningOutput {
@@ -2123,17 +2150,13 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		warmupSent = true
-		return safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamReasoningChoice(0, reasoningHeartbeat),
-		}, nil))
+		return safeWriteData(buildChatStreamReasoningChunk(completionID, created, modelID, reasoningHeartbeat))
 	}
 	emitKeepAlive := func() error {
 		if err := startStream(); err != nil {
 			return err
 		}
-		return safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-			buildChatStreamHeartbeatChoice(0),
-		}, nil))
+		return safeWriteData(buildChatStreamHeartbeatChunk(completionID, created, modelID))
 	}
 	stopProactiveFlush := make(chan struct{})
 	defer close(stopProactiveFlush)
@@ -2193,9 +2216,7 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 			if includeUsage {
 				finalUsage = buildUsage(request.Prompt, partialText, emittedReasoning.String())
 			}
-			_ = safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-				buildChatStreamFinishChoice(0, "stop"),
-			}, finalUsage))
+			_ = safeWriteData(buildChatStreamFinishChunk(completionID, created, modelID, finalUsage))
 			safeWriteDone()
 			return
 		}
@@ -2237,16 +2258,13 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 	if err := startStream(); err != nil {
 		return
 	}
-	_ = safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
-		buildChatStreamFinishChoice(0, "stop"),
-	}, finalUsage))
+	_ = safeWriteData(buildChatStreamFinishChunk(completionID, created, modelID, finalUsage))
 	safeWriteDone()
 }
 
 func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, request PromptRunRequest, modelID string, includeTrace bool, conversationID string) {
-	flusher, ok := w.(http.Flusher)
+	flusher, ok := requireSSEFlusher(w)
 	if !ok {
-		writeOpenAIError(w, http.StatusInternalServerError, "streaming is not supported by this response writer", "api_error", "stream_unsupported")
 		return
 	}
 
@@ -2255,7 +2273,6 @@ func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, r
 	createdAt := time.Now().Unix()
 	inProgressResponse := buildResponsesInProgressObject(responseID, modelID, createdAt)
 	attachConversationResponseMetadata(inProgressResponse, conversationID, "")
-	inProgressItem := buildResponsesMessageItem(outputItemID, "", "in_progress")
 	sequenceNumber := 0
 	var writeMu sync.Mutex
 	safeWriteEvent := func(eventType string, payload map[string]any) error {
@@ -2283,16 +2300,7 @@ func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, r
 		headersSent = true
 		prepareOpenAISSEHeaders(w)
 		a.markConversationEnvelope(conversationID, responseID, "")
-		initialEvents := []struct {
-			name    string
-			payload map[string]any
-		}{
-			{name: "response.created", payload: buildResponsesCreatedEvent(inProgressResponse)},
-			{name: "response.in_progress", payload: buildResponsesInProgressEvent(inProgressResponse)},
-			{name: "response.output_item.added", payload: buildResponsesOutputItemAddedEvent(responseID, inProgressItem)},
-			{name: "response.content_part.added", payload: buildResponsesContentPartAddedEvent(responseID, outputItemID)},
-		}
-		for _, event := range initialEvents {
+		for _, event := range buildResponsesInitialEvents(responseID, outputItemID, inProgressResponse) {
 			payload := event.payload
 			if payload == nil {
 				payload = map[string]any{}
@@ -2404,34 +2412,18 @@ func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, r
 			a.persistConversationSession(conversationID, request, partialResult)
 			streamCompletedItem := buildResponsesStreamTerminalItem(outputItemID, "completed")
 			streamCompletedResponse := buildResponsesStreamCompletedResponse(completedResponse, outputItemID)
-			finalEvents := []struct {
-				name    string
-				payload map[string]any
-			}{
-				{name: "response.output_text.done", payload: buildResponsesOutputTextDoneEvent(responseID, outputItemID, "")},
-				{name: "response.content_part.done", payload: buildResponsesContentPartDoneEvent(responseID, outputItemID, "")},
-			}
-			if partialReasoning != "" && !reasoningPhaseDone {
+			includeReasoningDone := partialReasoning != "" && !reasoningPhaseDone
+			if includeReasoningDone {
 				reasoningPhaseDone = true
-				finalEvents = append(finalEvents, struct {
-					name    string
-					payload map[string]any
-				}{name: "response.reasoning.done", payload: buildResponsesReasoningDoneEvent(responseID, outputItemID, "")})
 			}
-			finalEvents = append(finalEvents,
-				struct {
-					name    string
-					payload map[string]any
-				}{name: "response.output_item.done", payload: buildResponsesOutputItemDoneEvent(responseID, streamCompletedItem)},
-				struct {
-					name    string
-					payload map[string]any
-				}{name: "response.completed", payload: buildResponsesCompletedEvent(streamCompletedResponse)},
-			)
+			finalEvents := buildResponsesFinalEvents(responseID, outputItemID, streamCompletedItem, includeReasoningDone)
 			for _, event := range finalEvents {
 				if err := safeWriteEvent(event.name, event.payload); err != nil {
 					return
 				}
+			}
+			if err := safeWriteEvent("response.completed", buildResponsesCompletedEvent(streamCompletedResponse)); err != nil {
+				return
 			}
 			safeWriteDone()
 			return
@@ -2470,24 +2462,11 @@ func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, r
 	if err := startStream(); err != nil {
 		return
 	}
-	finalEvents := []struct {
-		name    string
-		payload map[string]any
-	}{
-		{name: "response.output_text.done", payload: buildResponsesOutputTextDoneEvent(responseID, outputItemID, "")},
-		{name: "response.content_part.done", payload: buildResponsesContentPartDoneEvent(responseID, outputItemID, "")},
-	}
-	if result.Reasoning != "" && !reasoningPhaseDone {
+	includeReasoningDone := result.Reasoning != "" && !reasoningPhaseDone
+	if includeReasoningDone {
 		reasoningPhaseDone = true
-		finalEvents = append(finalEvents, struct {
-			name    string
-			payload map[string]any
-		}{name: "response.reasoning.done", payload: buildResponsesReasoningDoneEvent(responseID, outputItemID, "")})
 	}
-	finalEvents = append(finalEvents, struct {
-		name    string
-		payload map[string]any
-	}{name: "response.output_item.done", payload: buildResponsesOutputItemDoneEvent(responseID, streamCompletedItem)})
+	finalEvents := buildResponsesFinalEvents(responseID, outputItemID, streamCompletedItem, includeReasoningDone)
 	for _, event := range finalEvents {
 		if err := safeWriteEvent(event.name, event.payload); err != nil {
 			return
@@ -2525,10 +2504,93 @@ func writeSSEComment(w http.ResponseWriter, flusher http.Flusher, comment string
 	return nil
 }
 
-func (a *App) writeResponsesStream(w http.ResponseWriter, r *http.Request, result InferenceResult, modelID string, includeTrace bool, conversationID string) {
+func requireSSEFlusher(w http.ResponseWriter) (http.Flusher, bool) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeOpenAIError(w, http.StatusInternalServerError, "streaming is not supported by this response writer", "api_error", "stream_unsupported")
+		return nil, false
+	}
+	return flusher, true
+}
+
+func buildResponsesInitialEvents(responseID string, outputItemID string, inProgressResponse map[string]any) []struct {
+	name    string
+	payload map[string]any
+} {
+	inProgressItem := buildResponsesMessageItem(outputItemID, "", "in_progress")
+	return []struct {
+		name    string
+		payload map[string]any
+	}{
+		{name: "response.created", payload: buildResponsesCreatedEvent(inProgressResponse)},
+		{name: "response.in_progress", payload: buildResponsesInProgressEvent(inProgressResponse)},
+		{name: "response.output_item.added", payload: buildResponsesOutputItemAddedEvent(responseID, inProgressItem)},
+		{name: "response.content_part.added", payload: buildResponsesContentPartAddedEvent(responseID, outputItemID)},
+	}
+}
+
+func buildChatStreamRoleChunk(completionID string, created int64, modelID string) map[string]any {
+	return buildChatStreamChunk(completionID, created, modelID, []map[string]any{
+		buildChatStreamDeltaChoice(0, map[string]any{"role": "assistant"}),
+	}, nil)
+}
+
+func buildChatStreamContentChunk(completionID string, created int64, modelID string, part string) map[string]any {
+	return buildChatStreamChunk(completionID, created, modelID, []map[string]any{
+		buildChatStreamDeltaChoice(0, map[string]any{"content": part}),
+	}, nil)
+}
+
+func buildChatStreamReasoningChunk(completionID string, created int64, modelID string, part string) map[string]any {
+	return buildChatStreamChunk(completionID, created, modelID, []map[string]any{
+		buildChatStreamReasoningChoice(0, part),
+	}, nil)
+}
+
+func buildChatStreamHeartbeatChunk(completionID string, created int64, modelID string) map[string]any {
+	return buildChatStreamChunk(completionID, created, modelID, []map[string]any{
+		buildChatStreamHeartbeatChoice(0),
+	}, nil)
+}
+
+func buildChatStreamFinishChunk(completionID string, created int64, modelID string, usage map[string]any) map[string]any {
+	return buildChatStreamChunk(completionID, created, modelID, []map[string]any{
+		buildChatStreamFinishChoice(0, "stop"),
+	}, usage)
+}
+
+func buildResponsesFinalEvents(
+	responseID string,
+	outputItemID string,
+	streamCompletedItem map[string]any,
+	includeReasoningDone bool,
+) []struct {
+	name    string
+	payload map[string]any
+} {
+	events := []struct {
+		name    string
+		payload map[string]any
+	}{
+		{name: "response.output_text.done", payload: buildResponsesOutputTextDoneEvent(responseID, outputItemID, "")},
+		{name: "response.content_part.done", payload: buildResponsesContentPartDoneEvent(responseID, outputItemID, "")},
+	}
+	if includeReasoningDone {
+		events = append(events, struct {
+			name    string
+			payload map[string]any
+		}{name: "response.reasoning.done", payload: buildResponsesReasoningDoneEvent(responseID, outputItemID, "")})
+	}
+	events = append(events, struct {
+		name    string
+		payload map[string]any
+	}{name: "response.output_item.done", payload: buildResponsesOutputItemDoneEvent(responseID, streamCompletedItem)})
+	return events
+}
+
+func (a *App) writeResponsesStream(w http.ResponseWriter, r *http.Request, result InferenceResult, modelID string, includeTrace bool, conversationID string) {
+	flusher, ok := requireSSEFlusher(w)
+	if !ok {
 		return
 	}
 	prepareOpenAISSEHeaders(w)
@@ -2544,7 +2606,6 @@ func (a *App) writeResponsesStream(w http.ResponseWriter, r *http.Request, resul
 	a.State.saveResponseWithAccount(responseID, completedResponse, conversationID, result.ThreadID, result.AccountEmail)
 	streamCompletedItem := buildResponsesStreamTerminalItem(outputItemID, "completed")
 	streamCompletedResponse := buildResponsesStreamCompletedResponse(completedResponse, outputItemID)
-	inProgressItem := buildResponsesMessageItem(outputItemID, "", "in_progress")
 	cfg, _, _ := a.State.Snapshot()
 	sequenceNumber := 0
 	writeEvent := func(eventType string, payload map[string]any) error {
@@ -2556,17 +2617,7 @@ func (a *App) writeResponsesStream(w http.ResponseWriter, r *http.Request, resul
 		return writeSSEEvent(w, flusher, eventType, payload)
 	}
 
-	events := []struct {
-		name    string
-		payload map[string]any
-	}{
-		{name: "response.created", payload: buildResponsesCreatedEvent(inProgressResponse)},
-		{name: "response.in_progress", payload: buildResponsesInProgressEvent(inProgressResponse)},
-		{name: "response.output_item.added", payload: buildResponsesOutputItemAddedEvent(responseID, inProgressItem)},
-		{name: "response.content_part.added", payload: buildResponsesContentPartAddedEvent(responseID, outputItemID)},
-	}
-
-	for _, event := range events {
+	for _, event := range buildResponsesInitialEvents(responseID, outputItemID, inProgressResponse) {
 		if err := writeEvent(event.name, event.payload); err != nil {
 			return
 		}
@@ -2588,14 +2639,7 @@ func (a *App) writeResponsesStream(w http.ResponseWriter, r *http.Request, resul
 		}
 	}
 
-	finalEvents := []struct {
-		name    string
-		payload map[string]any
-	}{
-		{name: "response.output_text.done", payload: buildResponsesOutputTextDoneEvent(responseID, outputItemID, "")},
-		{name: "response.content_part.done", payload: buildResponsesContentPartDoneEvent(responseID, outputItemID, "")},
-		{name: "response.output_item.done", payload: buildResponsesOutputItemDoneEvent(responseID, streamCompletedItem)},
-	}
+	finalEvents := buildResponsesFinalEvents(responseID, outputItemID, streamCompletedItem, false)
 	for _, event := range finalEvents {
 		if err := writeEvent(event.name, event.payload); err != nil {
 			return
