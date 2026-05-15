@@ -929,6 +929,8 @@ func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		a.handleAdminAccountManualImport(w, r)
 	case r.URL.Path == "/admin/accounts/login/status":
 		a.handleAdminAccountLoginStatus(w, r)
+	case r.URL.Path == "/admin/accounts/rotate-sticky":
+		a.handleAdminAccountRotateSticky(w, r)
 	case strings.HasPrefix(r.URL.Path, "/admin/accounts/"):
 		a.handleAdminAccountDelete(w, r)
 	default:

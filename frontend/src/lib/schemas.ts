@@ -81,6 +81,7 @@ export const accountItemSchema = z.object({
   space_name: z.string().optional(),
   plan_type: z.string().optional(),
   client_version: z.string().optional(),
+  sticky_proxy_account: z.string().optional(),
   last_error: z.string().optional(),
   consecutive_failures: z.number().optional(),
   total_successes: z.number().optional(),

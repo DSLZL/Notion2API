@@ -85,6 +85,7 @@ export interface AccountItem {
   space_name?: string
   plan_type?: string
   client_version?: string
+  sticky_proxy_account?: string
   last_error?: string
   consecutive_failures?: number
   total_successes?: number

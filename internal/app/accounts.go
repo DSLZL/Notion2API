@@ -8,12 +8,38 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var (
 	accountPathSlugPattern     = regexp.MustCompile(`[^a-z0-9]+`)
 	windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/].*`)
+	stickyRotationSuffix       = func() string { return time.Now().UTC().Format("20060102t150405") }
 )
+
+func rotateStickyProxyAccountValue(raw string) string {
+	base := strings.TrimSpace(raw)
+	if base == "" {
+		base = "account"
+	}
+	base = strings.Trim(base, "-")
+	return base + "-" + stickyRotationSuffix()
+}
+
+func rotateAccountStickyProxyAccount(cfg AppConfig, email string) (AppConfig, NotionAccount, string, error) {
+	account, _, ok := cfg.FindAccount(email)
+	if !ok {
+		return cfg, NotionAccount{}, "", fmt.Errorf("account not found: %s", strings.TrimSpace(email))
+	}
+	account = ensureAccountPaths(cfg, account)
+	base := strings.TrimSpace(account.StickyProxyAccount)
+	if base == "" {
+		base = resinStickyAccountForEmail(cfg, account.Email)
+	}
+	account.StickyProxyAccount = rotateStickyProxyAccountValue(base)
+	cfg.UpsertAccount(account)
+	return cfg, account, account.StickyProxyAccount, nil
+}
 
 type ResolvedLoginHelper struct {
 	SessionsDir string `json:"sessions_dir"`

@@ -881,14 +881,18 @@ func (a *App) handleAdminAccountLoginStart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	status, err := StartEmailLogin(r.Context(), cfg, LoginStartRequest{
+	status, updatedCfg, _, err := StartEmailLoginWithStickyRetry(r.Context(), cfg, LoginStartRequest{
 		Email:            email,
 		ProfileDir:       account.ProfileDir,
 		PendingPath:      account.PendingStatePath,
 		StorageStatePath: account.StorageStatePath,
 		AccountEmail:     account.Email,
 	})
-
+	cfg = updatedCfg
+	if err := a.State.SaveAndApply(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
+		return
+	}
 	cfg, _, _ = a.State.Snapshot()
 	account, _, _ = cfg.FindAccount(email)
 	account = ensureAccountPaths(cfg, account)
@@ -998,5 +1002,36 @@ func (a *App) handleAdminAccountLoginStatus(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"item":    a.accountRuntimeSummary(cfg, account),
+	})
+}
+
+func (a *App) handleAdminAccountRotateSticky(w http.ResponseWriter, r *http.Request) {
+	payload, ok := a.requireAdminPostBody(w, r)
+	if !ok {
+		return
+	}
+	email := strings.TrimSpace(stringValue(payload["email"]))
+	if email == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "email is required"})
+		return
+	}
+
+	cfg, _, _ := a.State.Snapshot()
+	updatedCfg, account, rotatedTo, err := rotateAccountStickyProxyAccount(cfg, email)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"detail": err.Error()})
+		return
+	}
+	if err := a.State.SaveAndApply(updatedCfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
+		return
+	}
+	a.invalidateDispatchProbeCache()
+	cfg, _, _ = a.State.Snapshot()
+	account, _, _ = cfg.FindAccount(email)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":              true,
+		"sticky_proxy_account": rotatedTo,
+		"account":              a.accountRuntimeSummary(cfg, account),
 	})
 }

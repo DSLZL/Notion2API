@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -171,5 +172,103 @@ func TestWriteSessionRefreshFailure_PreservesPendingAuthFields(t *testing.T) {
 	}
 	if got.DeviceID != "device-id" {
 		t.Fatalf("device_id lost: got %q", got.DeviceID)
+	}
+}
+
+func TestRotateAccountStickyProxyAccount_UsesExistingBase(t *testing.T) {
+	oldSuffix := stickyRotationSuffix
+	stickyRotationSuffix = func() string { return "next" }
+	t.Cleanup(func() {
+		stickyRotationSuffix = oldSuffix
+	})
+
+	cfg := normalizeConfig(AppConfig{
+		Accounts: []NotionAccount{{
+			Email:              "alice@example.com",
+			StickyProxyAccount: "alice",
+		}},
+	})
+
+	updated, account, rotatedTo, err := rotateAccountStickyProxyAccount(cfg, "alice@example.com")
+	if err != nil {
+		t.Fatalf("rotateAccountStickyProxyAccount failed: %v", err)
+	}
+	if rotatedTo != "alice-next" {
+		t.Fatalf("expected rotated sticky account alice-next, got %q", rotatedTo)
+	}
+	if account.StickyProxyAccount != "alice-next" {
+		t.Fatalf("expected updated account sticky_proxy_account alice-next, got %q", account.StickyProxyAccount)
+	}
+	reloaded, _, ok := updated.FindAccount("alice@example.com")
+	if !ok {
+		t.Fatalf("expected rotated account to remain in config")
+	}
+	if reloaded.StickyProxyAccount != "alice-next" {
+		t.Fatalf("expected persisted sticky_proxy_account alice-next, got %q", reloaded.StickyProxyAccount)
+	}
+}
+
+func TestStartEmailLoginWithStickyRetry_RotatesResinStickyAfterNetworkFailure(t *testing.T) {
+	oldAttempt := startEmailLoginAttempt
+	oldSuffix := stickyRotationSuffix
+	startEmailLoginAttempt = func(_ context.Context, cfg AppConfig, req LoginStartRequest) (LoginStatusFile, error) {
+		account, _, ok := cfg.FindAccount(req.AccountEmail)
+		if !ok {
+			t.Fatalf("expected account %q in config", req.AccountEmail)
+		}
+		switch account.StickyProxyAccount {
+		case "alice":
+			return LoginStatusFile{}, errors.New("fetch login bootstrap: surf: HTTP/2 request failed: uTLS.HandshakeContext() error: context deadline exceeded | UPSTREAM_REQUEST_FAILED connect_no_ingress_traffic")
+		case "alice-next":
+			return LoginStatusFile{Success: true, Status: "pending_code", Email: req.Email}, nil
+		default:
+			t.Fatalf("unexpected sticky proxy account %q", account.StickyProxyAccount)
+			return LoginStatusFile{}, nil
+		}
+	}
+	stickyRotationSuffix = func() string { return "next" }
+	t.Cleanup(func() {
+		startEmailLoginAttempt = oldAttempt
+		stickyRotationSuffix = oldSuffix
+	})
+
+	cfg := normalizeConfig(AppConfig{
+		ProxyMode:       "resin_forward",
+		ResinEnabled:    true,
+		ResinURL:        "http://127.0.0.1:2260/test-token",
+		ResinPlatform:   "Default",
+		ResinMode:       "forward",
+		ResinAuthVersion:"V1",
+		Accounts: []NotionAccount{{
+			Email:              "alice@example.com",
+			ProxyMode:          "resin_forward",
+			ResinEnabled:       true,
+			ResinURL:           "http://127.0.0.1:2260/test-token",
+			ResinPlatform:      "Default",
+			ResinMode:          "forward",
+			ResinAuthVersion:   "V1",
+			StickyProxyAccount: "alice",
+		}},
+	})
+
+	status, updatedCfg, rotated, err := StartEmailLoginWithStickyRetry(context.Background(), cfg, LoginStartRequest{
+		Email:        "alice@example.com",
+		AccountEmail: "alice@example.com",
+	})
+	if err != nil {
+		t.Fatalf("StartEmailLoginWithStickyRetry returned error: %v", err)
+	}
+	if !rotated {
+		t.Fatalf("expected sticky account rotation after retryable Resin failure")
+	}
+	if !status.Success || status.Status != "pending_code" {
+		t.Fatalf("expected successful pending_code status after retry, got %+v", status)
+	}
+	account, _, ok := updatedCfg.FindAccount("alice@example.com")
+	if !ok {
+		t.Fatalf("expected rotated account in updated config")
+	}
+	if account.StickyProxyAccount != "alice-next" {
+		t.Fatalf("expected sticky proxy account alice-next after retry, got %q", account.StickyProxyAccount)
 	}
 }

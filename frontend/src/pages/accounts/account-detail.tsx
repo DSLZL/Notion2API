@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Play, Zap, Trash2 } from 'lucide-react'
+import { X, Play, Zap, Trash2, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { DlSection } from '@/components/shared/dl-section'
 import { Section } from '@/components/shared/section'
@@ -17,6 +17,7 @@ import {
   useTestAccount,
   useDeleteAccount,
   useEditAccount,
+  useRotateStickyAccount,
 } from '@/lib/hooks/use-accounts'
 import type { AccountItem } from '@/lib/types'
 
@@ -41,6 +42,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
   const testMutation = useTestAccount()
   const deleteMutation = useDeleteAccount()
   const editMutation = useEditAccount()
+  const rotateStickyMutation = useRotateStickyAccount()
 
   // Reset state when account changes
   useEffect(() => {
@@ -111,6 +113,17 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
     )
   }
 
+  const handleRotateSticky = () => {
+    if (!account?.email) return
+    rotateStickyMutation.mutate(account.email, {
+      onSuccess: (res) => {
+        const rotatedTo = res.sticky_proxy_account || 'updated'
+        toast(`Sticky proxy rotated to ${rotatedTo}`, 'success')
+      },
+      onError: (e) => toast((e as Error).message, 'error'),
+    })
+  }
+
   return (
     <>
       {/* Backdrop */}
@@ -168,6 +181,15 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                 </Button>
                 <Button variant="secondary" size="sm" onClick={handleTest} loading={testMutation.isPending}>
                   <Play className="h-3.5 w-3.5" /> Test
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRotateSticky}
+                  loading={rotateStickyMutation.isPending}
+                  disabled={!account.email}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Rotate Sticky
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => setEditMode(!editMode)}>
                   {editMode ? 'Cancel Edit' : 'Edit'}
@@ -236,6 +258,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                   { label: 'Space ID', value: account.space_id ?? '\u2014' },
                   { label: 'Plan', value: account.plan_type ?? '\u2014' },
                   { label: 'Client Version', value: account.client_version ?? '\u2014' },
+                  { label: 'Sticky Proxy Account', value: account.sticky_proxy_account ?? '\u2014' },
                 ]}
               />
 

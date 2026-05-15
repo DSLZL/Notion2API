@@ -74,6 +74,8 @@ type notionLoginAPIError struct {
 	RetryAfter     time.Duration
 }
 
+var startEmailLoginAttempt = startEmailLoginAttemptImpl
+
 func (e *notionLoginAPIError) Error() string {
 	if e == nil {
 		return ""
@@ -609,7 +611,47 @@ func wrapLoginStageError(cfg AppConfig, upstream NotionUpstream, stage string, e
 	return fmt.Errorf("%s [%s]", wrapped.Error(), detail)
 }
 
+func isRetryableResinNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "utls.handshakecontext() error: context deadline exceeded") ||
+		strings.Contains(text, "connect_no_ingress_traffic") ||
+		strings.Contains(text, "upstream_request_failed")
+}
+
+func StartEmailLoginWithStickyRetry(ctx context.Context, cfg AppConfig, req LoginStartRequest) (LoginStatusFile, AppConfig, bool, error) {
+	status, err := startEmailLoginAttempt(ctx, cfg, req)
+	if err == nil || !isRetryableResinNetworkError(err) {
+		return status, cfg, false, err
+	}
+	accountEmail := firstNonEmpty(req.AccountEmail, req.Email)
+	account, _, ok := cfg.FindAccount(accountEmail)
+	if !ok {
+		return status, cfg, false, err
+	}
+	policy := cfg.ResolveProxyPolicyForAccount(account.Email)
+	if normalizeProxyMode(policy.Mode) != proxyModeResinForward || !policy.Resin.Enabled {
+		return status, cfg, false, err
+	}
+	rotatedCfg, _, _, rotateErr := rotateAccountStickyProxyAccount(cfg, account.Email)
+	if rotateErr != nil {
+		return status, cfg, false, err
+	}
+	retryStatus, retryErr := startEmailLoginAttempt(ctx, rotatedCfg, req)
+	if retryErr != nil {
+		return retryStatus, rotatedCfg, true, retryErr
+	}
+	return retryStatus, rotatedCfg, true, nil
+}
+
 func StartEmailLogin(ctx context.Context, cfg AppConfig, req LoginStartRequest) (LoginStatusFile, error) {
+	status, _, _, err := StartEmailLoginWithStickyRetry(ctx, cfg, req)
+	return status, err
+}
+
+func startEmailLoginAttemptImpl(ctx context.Context, cfg AppConfig, req LoginStartRequest) (LoginStatusFile, error) {
 	state := loginBaseState(req.Email, req.ProfileDir, req.PendingPath, req.StorageStatePath, "")
 	if err := os.MkdirAll(state.ProfileDir, 0o755); err != nil {
 		return failLoginState(req.PendingPath, state, err)

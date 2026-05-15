@@ -68,6 +68,15 @@ export function useDeleteAccount() {
   })
 }
 
+export function useRotateStickyAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (email: string) =>
+      api.post<{ success: boolean; sticky_proxy_account?: string }>('/admin/accounts/rotate-sticky', { email }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.ACCOUNTS }),
+  })
+}
+
 export function useEditAccount() {
   const qc = useQueryClient()
   return useMutation({
