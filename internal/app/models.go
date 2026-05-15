@@ -40,18 +40,21 @@ type probeModelsEnvelope struct {
 func builtinModelDefinitions() []ModelDefinition {
 	return []ModelDefinition{
 		{ID: "auto", Name: "Auto", NotionModel: "", Family: "system", Group: "default", Enabled: true, Aliases: []string{"default", "workflow", "notion-ai-workflow"}},
-		{ID: "gpt-5.2", Name: "GPT-5.2", NotionModel: "oatmeal-cookie", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"gpt52", "oatmeal-cookie"}},
-		{ID: "gpt-5.4", Name: "GPT-5.4", NotionModel: "oval-kumquat-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"gpt54", "oval-kumquat-medium"}},
+		{ID: "gpt-5.2", Name: "GPT-5.2", NotionModel: "oatmeal-cookie", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"gpt-5.2", "oatmeal-cookie"}},
+		{ID: "gpt-5.4", Name: "GPT-5.4", NotionModel: "oval-kumquat-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"gpt-5.4", "oval-kumquat-medium"}},
+		{ID: "gpt-5.5", Name: "GPT-5.5", NotionModel: "opal-quince-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"gpt-5.5", "opal-quince-medium"}},
 		{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", NotionModel: "vertex-gemini-2.5-flash", Family: "gemini", Group: "fast", Enabled: true, Aliases: []string{"vertex-gemini-2.5-flash"}},
 		{ID: "gemini-3.1-pro", Name: "Gemini 3.1 Pro", NotionModel: "galette-medium-thinking", Family: "gemini", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"gemini31pro", "galette-medium-thinking"}},
 		{ID: "sonnet-4.6", Name: "Sonnet 4.6", NotionModel: "almond-croissant-low", Family: "anthropic", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"claude-sonnet-4.6", "almond-croissant-low"}},
-		{ID: "opus-4.7", Name: "Opus 4.7", NotionModel: "apricot-sorbet-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.7", "opus47", "apricot-sorbet-medium"}},
-		{ID: "opus-4.6", Name: "Opus 4.6", NotionModel: "avocado-froyo-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.6", "avocado-froyo-medium"}},
+		{ID: "opus-4.7", Name: "Opus 4.7", NotionModel: "apricot-sorbet-high", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.7", "opus47", "apricot-sorbet-medium"}},
+		{ID: "opus-4.6", Name: "Opus 4.6", NotionModel: "avocado-froyo-high", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.6", "avocado-froyo-medium"}},
 		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", NotionModel: "oregon-grape-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"oregon-grape-medium"}},
 		{ID: "gpt-5.4-nano", Name: "GPT-5.4 Nano", NotionModel: "otaheite-apple-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"otaheite-apple-medium"}},
 		{ID: "minimax-m2.5", Name: "MiniMax M2.5", NotionModel: "fireworks-minimax-m2.5", Family: "mystery", Group: "intelligent", Enabled: true, Aliases: []string{"fireworks-minimax-m2.5"}},
 		{ID: "haiku-4.5", Name: "Haiku 4.5", NotionModel: "anthropic-haiku-4.5", Family: "anthropic", Group: "fast", Enabled: true, Aliases: []string{"claude-haiku-4.5", "anthropic-haiku-4.5"}},
 		{ID: "gemini-3-flash", Name: "Gemini 3 Flash", NotionModel: "gingerbread", Family: "gemini", Group: "fast", Enabled: true, Aliases: []string{"gingerbread"}},
+		{ID: "kimi-k2.6", Name: "Kimi K2.6", NotionModel: "fireworks-kimi-k2.6", Family: "kimi", Group: "fast", Enabled: true, Aliases: []string{"kimi-k2.6", "fireworks-kimi-k2.6"}},
+		{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro", NotionModel: "baseten-deepseek-v4-pro", Family: "deepseek", Group: "fast", Enabled: true, Aliases: []string{"deepseek-v4-pro", "baseten-deepseek-v4-pro"}},
 	}
 }
 
