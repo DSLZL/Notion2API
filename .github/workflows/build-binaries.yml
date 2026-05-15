@@ -108,7 +108,8 @@ jobs:
           cp LICENSE "${staging_dir}/"
           cp config.example.json "${staging_dir}/"
           cp config.docker.json "${staging_dir}/"
-          cp -r static "${staging_dir}/"
+          mkdir -p "${staging_dir}/frontend/dist"
+          cp -r frontend/dist/admin "${staging_dir}/frontend/dist/"
 
           if [[ "${ARCHIVE_KIND}" == "zip" ]]; then
             (

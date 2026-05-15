@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,6 +36,41 @@ func TestNormalizeConfig_ResinAuthVersion_InvalidFallsBackToV1(t *testing.T) {
 	})
 	if got := strings.TrimSpace(cfg.ResinAuthVersion); got != "V1" {
 		t.Fatalf("expected invalid auth version fallback to V1, got %q", got)
+	}
+}
+
+func TestDefaultConfig_AdminStaticDirDefaultsToFrontendDist(t *testing.T) {
+	cfg := defaultConfig()
+	if got := strings.TrimSpace(cfg.Admin.StaticDir); got != "frontend/dist/admin" {
+		t.Fatalf("expected default admin static dir frontend/dist/admin, got %q", got)
+	}
+}
+
+func TestResolveStaticAdminDirUsesFrontendDistWhenPresent(t *testing.T) {
+	tmp := t.TempDir()
+	frontendDir := filepath.Join(tmp, "frontend", "dist", "admin")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir tmp failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	got := resolveStaticAdminDir("")
+	if got != filepath.Clean("frontend/dist/admin") {
+		t.Fatalf("expected default admin static dir %q, got %q", filepath.Clean("frontend/dist/admin"), got)
+	}
+
+	if err := os.MkdirAll(frontendDir, 0o755); err != nil {
+		t.Fatalf("create frontend dist dir failed: %v", err)
+	}
+	got = resolveStaticAdminDir("")
+	if got != filepath.Clean("frontend/dist/admin") {
+		t.Fatalf("expected frontend dist dir %q, got %q", filepath.Clean("frontend/dist/admin"), got)
 	}
 }
 

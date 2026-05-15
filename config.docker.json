@@ -46,7 +46,7 @@
     "enabled": true,
     "password": "change-me-admin-password",
     "token_ttl_hours": 24,
-    "static_dir": "/app/static/admin"
+    "static_dir": "/app/frontend/dist/admin"
   },
   "login_helper": {
     "sessions_dir": "/app/data/notion_accounts",

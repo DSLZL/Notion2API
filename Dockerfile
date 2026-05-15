@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY cmd ./cmd
 COPY internal ./internal
-COPY --from=frontend-builder /static/admin /src/static/admin
+COPY --from=frontend-builder /frontend/dist/admin /src/frontend/dist/admin
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -38,10 +38,10 @@ ENV TZ=Asia/Shanghai
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates tzdata curl tini \
-    && mkdir -p /app/config /app/data/notion_accounts /app/static
+    && mkdir -p /app/config /app/data/notion_accounts /app/frontend/dist
 
 COPY --from=builder /out/notion2api /app/notion2api
-COPY --from=builder /src/static /app/static
+COPY --from=builder /src/frontend/dist /app/frontend/dist
 COPY config.docker.json /app/config/config.default.json
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 

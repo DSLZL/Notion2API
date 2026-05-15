@@ -47,6 +47,8 @@ bun --cwd ./frontend run build:static
 go build ./cmd/notion2api
 ```
 
+前端构建产物默认输出到 `frontend/dist/admin`，后端会优先从该目录加载管理台静态资源。
+
 ## Docker 部署
 
 先按实际环境修改 `config.docker.json`，再启动：
@@ -158,6 +160,7 @@ HTTP 请求优先顺序：
 
 - 首次启动后先访问 `/admin`，确认账号、配置和连通性是否正常
 - 修改管理台前端后需执行 `bun --cwd ./frontend run build:static`
+- 如需自定义管理台静态目录，可设置 `admin.static_dir`；默认值为 `frontend/dist/admin`
 - 调整会话延续与存储时，建议同步检查 `internal/app/sqlite_store.go` 的 schema 与迁移兼容性
 
 ## 开源协议

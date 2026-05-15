@@ -32,7 +32,7 @@
     "enabled": true,
     "password": "change-me-admin-password",
     "token_ttl_hours": 24,
-    "static_dir": "static/admin"
+    "static_dir": "frontend/dist/admin"
   },
   "responses": {
     "store_ttl_seconds": 3600
