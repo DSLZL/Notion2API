@@ -17,7 +17,7 @@ import {
   useBatchDeleteConversations,
 } from '@/lib/hooks/use-conversations'
 import { formatRelativeTime } from '@/lib/format'
-import { useToast } from '@/components/ui/toast'
+import { useI18n } from '@/lib/i18n'
 import { MessageSquare, RefreshCw, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { QUERY_KEYS } from '@/lib/constants'
@@ -30,6 +30,7 @@ function statusVariant(s: string): 'success' | 'warning' | 'danger' | 'default' 
 }
 
 export default function ConversationsPage() {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [originFilter, setOriginFilter] = useState('all')
@@ -43,7 +44,6 @@ export default function ConversationsPage() {
   const { data: detail } = useConversationDetail(selectedId)
   const deleteMutation = useDeleteConversation()
   const batchDeleteMutation = useBatchDeleteConversations()
-  const { toast } = useToast()
 
   const filtered = useMemo(() => {
     let list = conversations
@@ -92,7 +92,7 @@ export default function ConversationsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`Conversations${conversations.length ? ` (${conversations.length})` : ''}`}
+        title={t('conversations.pageTitle', { suffix: conversations.length ? ` (${conversations.length})` : '' })}
         actions={
           <Button
             variant="ghost"
@@ -107,26 +107,26 @@ export default function ConversationsPage() {
       {/* Filters */}
       <div className="flex items-center gap-3">
         <Input
-          placeholder="Search..."
+          placeholder={t('conversations.searchPlaceholder')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-[240px]"
         />
         <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-[140px]">
-          <option value="all">All status</option>
-          <option value="completed">Completed</option>
-          <option value="in_progress">In progress</option>
-          <option value="failed">Failed</option>
+          <option value="all">{t('conversations.filterAllStatus')}</option>
+          <option value="completed">{t('conversations.filterCompleted')}</option>
+          <option value="in_progress">{t('conversations.filterInProgress')}</option>
+          <option value="failed">{t('conversations.filterFailed')}</option>
         </Select>
         <Select value={originFilter} onChange={(e) => setOriginFilter(e.target.value)} className="w-[130px]">
-          <option value="all">All origin</option>
-          <option value="local">Local</option>
-          <option value="notion">Notion</option>
-          <option value="merged">Merged</option>
+          <option value="all">{t('conversations.filterAllOrigin')}</option>
+          <option value="local">{t('conversations.filterLocal')}</option>
+          <option value="notion">{t('conversations.filterNotion')}</option>
+          <option value="merged">{t('conversations.filterMerged')}</option>
         </Select>
       </div>
 
-      {isError && <Alert variant="error">Failed to load conversations.</Alert>}
+      {isError && <Alert variant="error">{t('conversations.loadFailed')}</Alert>}
 
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 min-h-[480px]">
         {/* List */}
@@ -141,8 +141,8 @@ export default function ConversationsPage() {
             {!isLoading && filtered.length === 0 && (
               <EmptyState
                 icon={<MessageSquare className="h-6 w-6" />}
-                title="No conversations"
-                description={search ? 'Try a different search.' : 'No conversations yet.'}
+                title={t('conversations.emptyTitle')}
+                description={search ? t('conversations.emptySearchDesc') : t('conversations.emptyDesc')}
               />
             )}
             {filtered.map((c) => (
@@ -173,9 +173,9 @@ export default function ConversationsPage() {
 
           {selectedIds.size > 0 && (
             <div className="border-t border-hairline p-3 bg-canvas-soft flex items-center justify-between">
-              <span className="text-xs text-ink-mute">{selectedIds.size} selected</span>
+              <span className="text-xs text-ink-mute">{t('conversations.selectedCount', { count: selectedIds.size })}</span>
               <Button variant="danger" size="sm" onClick={() => setShowBatchDelete(true)}>
-                <Trash2 className="h-3.5 w-3.5" /> Delete
+                <Trash2 className="h-3.5 w-3.5" /> {t('common.delete')}
               </Button>
             </div>
           )}
@@ -186,8 +186,8 @@ export default function ConversationsPage() {
           {!selectedId && (
             <EmptyState
               icon={<MessageSquare className="h-8 w-8" />}
-              title="Select a conversation"
-              description="Choose a conversation from the list to view details."
+              title={t('conversations.selectTitle')}
+              description={t('conversations.selectDesc')}
             />
           )}
 
@@ -207,13 +207,13 @@ export default function ConversationsPage() {
 
               {detail.messages && detail.messages.length > 0 && (
                 <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-ink-mute">Messages</h4>
+                  <h4 className="text-sm font-medium text-ink-mute">{t('conversations.messages')}</h4>
                   {detail.messages.map((msg, i) => (
                     <div key={i} className={`rounded-[var(--radius-card)] p-3 text-sm ${
                       msg.role === 'user' ? 'bg-canvas-soft' : 'bg-primary/5'
                     }`}>
                       <p className="text-xs font-medium text-ink-mute mb-1">
-                        {msg.role === 'user' ? '\uD83D\uDC64 User' : '\uD83E\uDD16 Assistant'}
+                        {msg.role === 'user' ? t('conversations.roleUser') : t('conversations.roleAssistant')}
                       </p>
                       <p className="whitespace-pre-wrap text-ink">{msg.content}</p>
                     </div>
@@ -223,7 +223,7 @@ export default function ConversationsPage() {
 
               <div className="pt-2">
                 <Button variant="danger" size="sm" onClick={() => setShowSingleDelete(true)}>
-                  <Trash2 className="h-3.5 w-3.5" /> Delete Conversation
+                  <Trash2 className="h-3.5 w-3.5" /> {t('conversations.deleteConversation')}
                 </Button>
               </div>
             </div>
@@ -237,16 +237,16 @@ export default function ConversationsPage() {
         onClose={() => setShowBatchDelete(false)}
         onConfirm={handleBatchDelete}
         loading={batchDeleteMutation.isPending}
-        title={`Delete ${selectedIds.size} conversations?`}
-        description="This action cannot be undone."
+        title={t('conversations.batchDeleteTitle', { count: selectedIds.size })}
+        description={t('conversations.deleteConfirmDesc')}
       />
       <ConfirmDangerDialog
         open={showSingleDelete}
         onClose={() => setShowSingleDelete(false)}
         onConfirm={handleSingleDelete}
         loading={deleteMutation.isPending}
-        title="Delete conversation?"
-        description="This action cannot be undone."
+        title={t('conversations.singleDeleteTitle')}
+        description={t('conversations.deleteConfirmDesc')}
       />
     </div>
   )

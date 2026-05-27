@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,6 +148,77 @@ func TestRunPromptStreamWithSinkFallsBackToBrowserTransportOnTrustRuleDenied(t *
 	}
 	if streamed.String() != "stream-ok" {
 		t.Fatalf("streamed text mismatch: got %q want %q", streamed.String(), "stream-ok")
+	}
+	if result.Text != "stream-ok" {
+		t.Fatalf("result text mismatch: got %q want %q", result.Text, "stream-ok")
+	}
+}
+
+func TestRunPromptStreamWithSinkBrowserStreamFallbackEmitsIncrementalDeltas(t *testing.T) {
+	const trustMessageID = "msg-trust-streaming"
+	const browserMessageID = "msg-browser-streaming"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/runInferenceTranscript" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload failed: %v", err)
+		}
+		threadID := strings.TrimSpace(stringValue(payload["threadId"]))
+		if threadID == "" {
+			t.Fatalf("runInference payload missing threadId")
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(buildTrustRuleDeniedResponse(t, threadID, trustMessageID, "trust-rule-denied")))
+	}))
+	defer server.Close()
+
+	client := newBrowserFallbackTestClient(server.URL)
+	streamFallbackCalls := 0
+	client.browserRunInferenceStreamFallback = func(ctx context.Context, payload map[string]any) (io.ReadCloser, error) {
+		streamFallbackCalls++
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+			chunks := []string{
+				`{"type":"agent-inference","id":"` + browserMessageID + `","value":[{"type":"text","content":"stream-"}]}` + "\n",
+				`{"type":"agent-inference","id":"` + browserMessageID + `","value":[{"type":"text","content":"stream-ok"}],"finishedAt":"2026-04-18T12:45:00.000Z"}` + "\n",
+			}
+			for _, chunk := range chunks {
+				if _, err := pw.Write([]byte(chunk)); err != nil {
+					return
+				}
+				time.Sleep(15 * time.Millisecond)
+			}
+		}()
+		return pr, nil
+	}
+
+	deltas := make([]string, 0, 4)
+	result, err := client.RunPromptStreamWithSink(context.Background(), PromptRunRequest{
+		Prompt:       "hello",
+		PublicModel:  "opus-4.7",
+		NotionModel:  "apricot-sorbet-medium",
+		UseWebSearch: false,
+	}, InferenceStreamSink{
+		Text: func(delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunPromptStreamWithSink returned error: %v", err)
+	}
+	if streamFallbackCalls != 1 {
+		t.Fatalf("expected browser stream fallback to run once, got %d", streamFallbackCalls)
+	}
+	if len(deltas) < 2 {
+		t.Fatalf("expected multiple text deltas, got %d (%v)", len(deltas), deltas)
+	}
+	if strings.Join(deltas, "") != "stream-ok" {
+		t.Fatalf("streamed text mismatch: got %q want %q", strings.Join(deltas, ""), "stream-ok")
 	}
 	if result.Text != "stream-ok" {
 		t.Fatalf("result text mismatch: got %q want %q", result.Text, "stream-ok")

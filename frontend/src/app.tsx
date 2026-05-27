@@ -10,8 +10,10 @@ import TesterPage from '@/pages/tester'
 import ConversationsPage from '@/pages/conversations'
 import SettingsPage from '@/pages/settings'
 import { ModelsPage } from '@/pages/models'
+import AgentsPage from '@/pages/agents'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThemeProvider } from '@/lib/theme'
+import { I18nProvider } from '@/lib/i18n'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +51,7 @@ function AppRoutes() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/models" element={<ModelsPage />} />
+          <Route path="/agents" element={<AgentsPage />} />
           <Route path="/tester" element={<TesterPage />} />
           <Route path="/conversations" element={<ConversationsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
@@ -62,13 +65,15 @@ function AppRoutes() {
 export function App() {
   return (
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <HashRouter>
-            <AppRoutes />
-          </HashRouter>
-        </ToastProvider>
-      </QueryClientProvider>
+      <I18nProvider>
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <HashRouter>
+              <AppRoutes />
+            </HashRouter>
+          </ToastProvider>
+        </QueryClientProvider>
+      </I18nProvider>
     </ThemeProvider>
   )
 }

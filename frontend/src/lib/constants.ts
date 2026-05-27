@@ -4,6 +4,7 @@ export const ROUTES = {
   ACCOUNTS: '/accounts',
   ACCOUNT_DETAIL: '/accounts/:id',
   MODELS: '/models',
+  AGENTS: '/agents',
   TESTER: '/tester',
   CONVERSATIONS: '/conversations',
   SETTINGS: '/settings',
@@ -16,6 +17,7 @@ export const QUERY_KEYS = {
   ACCOUNTS: ['accounts'] as const,
   MODELS: ['models'] as const,
   CONVERSATIONS: ['conversations'] as const,
+  AGENTS: ['agents'] as const,
   SETTINGS: ['settings'] as const,
 } as const
 

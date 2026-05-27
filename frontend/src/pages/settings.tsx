@@ -9,6 +9,7 @@ import { Alert } from '@/components/ui/alert'
 import { Dialog } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { useI18n } from '@/lib/i18n'
 import { ConfirmDangerDialog } from '@/components/shared/confirm-danger-dialog'
 import {
   useSettings,
@@ -45,10 +46,13 @@ function deepSet(obj: Record<string, unknown>, path: string[], value: unknown) {
 
 // Secret change dialog
 function SecretDialog({
-  open, onClose, title, onSave, loading,
+  open, onClose, title, onSave, loading, labelNewValue, labelConfirm, placeholderNewValue, placeholderConfirm, cancelLabel, updateLabel,
 }: {
   open: boolean; onClose: () => void; title: string
   onSave: (value: string) => void; loading: boolean
+  labelNewValue: string; labelConfirm: string
+  placeholderNewValue: string; placeholderConfirm: string
+  cancelLabel: string; updateLabel: string
 }) {
   const [value, setValue] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -59,13 +63,13 @@ function SecretDialog({
     <Dialog open={open} onClose={onClose} title={title}>
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-ink">New value</label>
+          <label className="text-sm font-medium text-ink">{labelNewValue}</label>
           <div className="relative">
             <Input
               type={show ? 'text' : 'password'}
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              placeholder="Enter new value..."
+              placeholder={placeholderNewValue}
             />
             <button
               type="button"
@@ -77,18 +81,18 @@ function SecretDialog({
           </div>
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-ink">Confirm</label>
+          <label className="text-sm font-medium text-ink">{labelConfirm}</label>
           <Input
             type={show ? 'text' : 'password'}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            placeholder="Confirm new value..."
+            placeholder={placeholderConfirm}
             error={confirm.length > 0 && value !== confirm}
           />
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => onSave(value)} disabled={!valid} loading={loading}>Update</Button>
+          <Button variant="secondary" onClick={onClose}>{cancelLabel}</Button>
+          <Button onClick={() => onSave(value)} disabled={!valid} loading={loading}>{updateLabel}</Button>
         </div>
       </div>
     </Dialog>
@@ -96,6 +100,7 @@ function SecretDialog({
 }
 
 export default function SettingsPage() {
+  const { t } = useI18n()
   const { data: settings, isLoading } = useSettings()
   const { data: modelsData } = useModels()
   const saveMutation = useSaveSettings()
@@ -139,7 +144,7 @@ export default function SettingsPage() {
     saveMutation.mutate(dirty, {
       onSuccess: () => {
         setDirty({})
-        toast('Settings saved', 'success')
+        toast(t('settings.saved'), 'success')
       },
       onError: (e) => setError((e as Error).message),
     })
@@ -152,7 +157,7 @@ export default function SettingsPage() {
       {
         onSuccess: () => {
           setSecretDialog(null)
-          toast('Secret updated', 'success')
+          toast(t('settings.secretUpdated'), 'success')
         },
         onError: (e) => toast((e as Error).message, 'error'),
       },
@@ -163,7 +168,7 @@ export default function SettingsPage() {
     secretMutation.mutate(
       { field, value: null },
       {
-        onSuccess: () => toast('Secret cleared', 'success'),
+        onSuccess: () => toast(t('settings.secretCleared'), 'success'),
         onError: (e) => toast((e as Error).message, 'error'),
       },
     )
@@ -184,7 +189,7 @@ export default function SettingsPage() {
           onError: () => setShowImportConfirm(true), // still show but warn
         })
       } catch {
-        toast('Invalid JSON file', 'error')
+        toast(t('settings.invalidJson'), 'error')
       }
     }
     reader.readAsText(file)
@@ -197,7 +202,7 @@ export default function SettingsPage() {
       onSuccess: () => {
         setShowImportConfirm(false)
         setImportData(null)
-        toast('Config imported successfully', 'success')
+        toast(t('settings.importSuccess'), 'success')
       },
       onError: (e) => toast((e as Error).message, 'error'),
     })
@@ -206,7 +211,7 @@ export default function SettingsPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Settings" />
+        <PageHeader title={t('settings.title')} />
         <div className="animate-pulse space-y-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-12 bg-hairline-cool rounded-[var(--radius-card)]" />
@@ -222,10 +227,10 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Settings"
+        title={t('settings.title')}
         actions={
           <Button onClick={handleSave} disabled={!isDirty} loading={saveMutation.isPending}>
-            <Save className="h-4 w-4" /> Save Changes
+            <Save className="h-4 w-4" /> {t('settings.saveChanges')}
           </Button>
         }
       />
@@ -233,53 +238,53 @@ export default function SettingsPage() {
       {error && <Alert variant="error">{error}</Alert>}
 
       {/* Secrets */}
-      <Section title="Secrets">
+      <Section title={t('settings.secrets')}>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm text-ink">API Key</span>
+              <span className="text-sm text-ink">{t('settings.apiKey')}</span>
               <Badge variant={secrets?.api_key_set ? 'success' : 'default'} className="ml-2">
-                {secrets?.api_key_set ? 'set' : 'not set'}
+                {secrets?.api_key_set ? t('settings.secretSet') : t('settings.secretNotSet')}
               </Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'api_key', title: 'Change API Key' })}>
-                {secrets?.api_key_set ? 'Change' : 'Set'}
+              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'api_key', title: t('settings.changeApiKey') })}>
+                {secrets?.api_key_set ? t('common.change') : t('common.set')}
               </Button>
               {secrets?.api_key_set && (
-                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('api_key')}>Clear</Button>
+                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('api_key')}>{t('common.clear')}</Button>
               )}
             </div>
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm text-ink">Admin Password</span>
+              <span className="text-sm text-ink">{t('settings.adminPassword')}</span>
               <Badge variant={secrets?.admin_password_set ? 'success' : 'default'} className="ml-2">
-                {secrets?.admin_password_set ? 'set' : 'not set'}
+                {secrets?.admin_password_set ? t('settings.secretSet') : t('settings.secretNotSet')}
               </Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'admin.password', title: 'Change Admin Password' })}>
-                {secrets?.admin_password_set ? 'Change' : 'Set'}
+              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'admin.password', title: t('settings.changeAdminPassword') })}>
+                {secrets?.admin_password_set ? t('common.change') : t('common.set')}
               </Button>
               {secrets?.admin_password_set && (
-                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('admin.password')}>Clear</Button>
+                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('admin.password')}>{t('common.clear')}</Button>
               )}
             </div>
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm text-ink">Resin Proxy Token</span>
+              <span className="text-sm text-ink">{t('settings.resinProxyToken')}</span>
               <Badge variant={secrets?.resin_proxy_token_set ? 'success' : 'default'} className="ml-2">
-                {secrets?.resin_proxy_token_set ? 'set' : 'not set'}
+                {secrets?.resin_proxy_token_set ? t('settings.secretSet') : t('settings.secretNotSet')}
               </Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'resin_proxy_token', title: 'Change Resin Proxy Token' })}>
-                {secrets?.resin_proxy_token_set ? 'Change' : 'Set'}
+              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'resin_proxy_token', title: t('settings.changeResinProxyToken') })}>
+                {secrets?.resin_proxy_token_set ? t('common.change') : t('common.set')}
               </Button>
               {secrets?.resin_proxy_token_set && (
-                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('resin_proxy_token')}>Clear</Button>
+                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('resin_proxy_token')}>{t('common.clear')}</Button>
               )}
             </div>
           </div>
@@ -287,9 +292,9 @@ export default function SettingsPage() {
       </Section>
 
       {/* General */}
-      <Section title="General">
+      <Section title={t('settings.general')}>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-ink">Default Model</label>
+          <label className="text-sm font-medium text-ink">{t('settings.defaultModel')}</label>
           <Select
             value={getVal(['default_model'], 'auto') as string}
             onChange={(e) => setVal(['default_model'], e.target.value)}
@@ -304,10 +309,10 @@ export default function SettingsPage() {
       </Section>
 
       {/* Runtime */}
-      <Section title="Runtime">
+      <Section title={t('settings.runtime')}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink">Timeout (sec)</label>
+            <label className="text-sm font-medium text-ink">{t('settings.timeoutSec')}</label>
             <Input
               type="number"
               value={getVal(['runtime', 'timeout_sec'], 180) as number}
@@ -315,7 +320,7 @@ export default function SettingsPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink">Poll Interval (sec)</label>
+            <label className="text-sm font-medium text-ink">{t('settings.pollIntervalSec')}</label>
             <Input
               type="number"
               step="0.1"
@@ -324,7 +329,7 @@ export default function SettingsPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink">Poll Max Rounds</label>
+            <label className="text-sm font-medium text-ink">{t('settings.pollMaxRounds')}</label>
             <Input
               type="number"
               value={getVal(['runtime', 'poll_max_rounds'], 40) as number}
@@ -335,18 +340,18 @@ export default function SettingsPage() {
       </Section>
 
       {/* Features */}
-      <Section title="Features">
+      <Section title={t('settings.features')}>
         <div className="space-y-3">
           {[
-            { key: 'use_web_search', label: 'Web Search' },
-            { key: 'use_read_only_mode', label: 'Read-only Mode' },
-            { key: 'force_fresh_thread_per_request', label: 'Fresh Thread Per Request' },
-            { key: 'enable_generate_image', label: 'Generate Image' },
-            { key: 'enable_csv_attachment_support', label: 'CSV Attachment' },
-            { key: 'writer_mode', label: 'Writer Mode' },
-          ].map(({ key, label }) => (
+            { key: 'use_web_search', labelKey: 'settings.feature.use_web_search' },
+            { key: 'use_read_only_mode', labelKey: 'settings.feature.use_read_only_mode' },
+            { key: 'force_fresh_thread_per_request', labelKey: 'settings.feature.force_fresh_thread_per_request' },
+            { key: 'enable_generate_image', labelKey: 'settings.feature.enable_generate_image' },
+            { key: 'enable_csv_attachment_support', labelKey: 'settings.feature.enable_csv_attachment_support' },
+            { key: 'writer_mode', labelKey: 'settings.feature.writer_mode' },
+          ].map(({ key, labelKey }) => (
             <div key={key} className="flex items-center justify-between">
-              <span className="text-sm text-ink">{label}</span>
+              <span className="text-sm text-ink">{t(labelKey)}</span>
               <Toggle
                 checked={getVal(['features', key], false) as boolean}
                 onChange={(v) => setVal(['features', key], v)}
@@ -357,17 +362,17 @@ export default function SettingsPage() {
       </Section>
 
       {/* Session Refresh */}
-      <Section title="Session Refresh">
+      <Section title={t('settings.sessionRefresh')}>
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-ink">Enabled</span>
+            <span className="text-sm text-ink">{t('settings.enabled')}</span>
             <Toggle
               checked={getVal(['session_refresh', 'enabled'], true) as boolean}
               onChange={(v) => setVal(['session_refresh', 'enabled'], v)}
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink">Interval (sec)</label>
+            <label className="text-sm font-medium text-ink">{t('settings.intervalSec')}</label>
             <Input
               type="number"
               value={getVal(['session_refresh', 'interval_sec'], 900) as number}
@@ -376,12 +381,12 @@ export default function SettingsPage() {
             />
           </div>
           {[
-            { key: 'startup_check', label: 'Startup Check' },
-            { key: 'retry_on_auth_error', label: 'Retry on Auth Error' },
-            { key: 'auto_switch_account', label: 'Auto-switch Account' },
-          ].map(({ key, label }) => (
+            { key: 'startup_check', labelKey: 'settings.startupCheck' },
+            { key: 'retry_on_auth_error', labelKey: 'settings.retryOnAuthError' },
+            { key: 'auto_switch_account', labelKey: 'settings.autoSwitchAccount' },
+          ].map(({ key, labelKey }) => (
             <div key={key} className="flex items-center justify-between">
-              <span className="text-sm text-ink">{label}</span>
+              <span className="text-sm text-ink">{t(labelKey)}</span>
               <Toggle
                 checked={getVal(['session_refresh', key], false) as boolean}
                 onChange={(v) => setVal(['session_refresh', key], v)}
@@ -392,22 +397,22 @@ export default function SettingsPage() {
       </Section>
 
       {/* Proxy */}
-      <Section title="Proxy">
+      <Section title={t('settings.proxy')}>
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink">Mode</label>
+            <label className="text-sm font-medium text-ink">{t('settings.mode')}</label>
             <Select
               value={getVal(['config', 'resin_proxy_mode'], 'off') as string}
               onChange={(e) => setVal(['config', 'resin_proxy_mode'], e.target.value)}
               className="max-w-xs"
             >
-              <option value="off">Off</option>
-              <option value="always">Always</option>
-              <option value="fallback">Fallback</option>
+              <option value="off">{t('settings.modeOff')}</option>
+              <option value="always">{t('settings.modeAlways')}</option>
+              <option value="fallback">{t('settings.modeFallback')}</option>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink">Proxy URL</label>
+            <label className="text-sm font-medium text-ink">{t('settings.proxyURL')}</label>
             <Input
               value={getVal(['config', 'resin_proxy_url'], '') as string}
               onChange={(e) => setVal(['config', 'resin_proxy_url'], e.target.value)}
@@ -419,17 +424,17 @@ export default function SettingsPage() {
       </Section>
 
       {/* Storage */}
-      <Section title="Storage">
+      <Section title={t('settings.storage')}>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-ink">Persist Conversations</span>
+            <span className="text-sm text-ink">{t('settings.persistConversations')}</span>
             <Toggle
               checked={getVal(['config', 'persist_conversations'], true) as boolean}
               onChange={(v) => setVal(['config', 'persist_conversations'], v)}
             />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-sm text-ink">Persist Responses</span>
+            <span className="text-sm text-ink">{t('settings.persistResponses')}</span>
             <Toggle
               checked={getVal(['config', 'persist_responses'], true) as boolean}
               onChange={(v) => setVal(['config', 'persist_responses'], v)}
@@ -439,7 +444,7 @@ export default function SettingsPage() {
       </Section>
 
       {/* Model Aliases */}
-      <Section title="Model Aliases">
+      <Section title={t('settings.modelAliases')}>
         <div className="space-y-3">
           {Object.entries(
             (getVal(['model_aliases'], {}) as Record<string, string>) || {},
@@ -482,32 +487,32 @@ export default function SettingsPage() {
               setVal(['model_aliases'], a);
             }}
           >
-            <Plus className="h-3.5 w-3.5" /> Add Alias
+            <Plus className="h-3.5 w-3.5" /> {t('settings.addAlias')}
           </Button>
         </div>
       </Section>
 
       {/* Config Management */}
-      <Section title="Config Management">
+      <Section title={t('settings.configManagement')}>
         <div className="space-y-4">
           <div className="flex flex-wrap gap-3">
             <Button variant="secondary" onClick={() => exportMutation.mutate()} loading={exportMutation.isPending}>
-              <Download className="h-4 w-4" /> Export Config
+              <Download className="h-4 w-4" /> {t('settings.exportConfig')}
             </Button>
             <Button variant="secondary" onClick={() => createSnapshotMutation.mutate()} loading={createSnapshotMutation.isPending}>
-              <Camera className="h-4 w-4" /> Create Snapshot
+              <Camera className="h-4 w-4" /> {t('settings.createSnapshot')}
             </Button>
             <label className="inline-flex">
               <input type="file" accept=".json" onChange={handleImportSelect} className="hidden" />
               <Button variant="secondary" onClick={() => {}} className="pointer-events-none">
-                <Upload className="h-4 w-4" /> Import Config
+                <Upload className="h-4 w-4" /> {t('settings.importConfig')}
               </Button>
             </label>
           </div>
 
           {snapshots.length > 0 && (
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-ink-mute">Snapshots</h4>
+              <h4 className="text-sm font-medium text-ink-mute">{t('settings.snapshots')}</h4>
               {snapshots.map((s) => (
                 <p key={s.name} className="text-xs text-ink-mute-2 font-mono">{s.name}</p>
               ))}
@@ -523,6 +528,12 @@ export default function SettingsPage() {
         title={secretDialog?.title ?? ''}
         onSave={handleSecretSave}
         loading={secretMutation.isPending}
+        labelNewValue={t('settings.newValue')}
+        labelConfirm={t('settings.confirm')}
+        placeholderNewValue={t('settings.enterNewValue')}
+        placeholderConfirm={t('settings.confirmNewValue')}
+        cancelLabel={t('common.cancel')}
+        updateLabel={t('common.update')}
       />
 
       {/* Import Confirm */}
@@ -531,8 +542,8 @@ export default function SettingsPage() {
         onClose={() => { setShowImportConfirm(false); setImportData(null) }}
         onConfirm={handleImportConfirm}
         loading={importMutation.isPending}
-        title="Import Configuration?"
-        description={`This will overwrite current settings with the imported file${importFile ? ` (${importFile.name})` : ''}. A snapshot has been created as backup.`}
+        title={t('settings.importConfirmTitle')}
+        description={t('settings.importConfirmDesc', { file: importFile ? ` (${importFile.name})` : '' })}
       />
     </div>
   )

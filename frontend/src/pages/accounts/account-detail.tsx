@@ -12,6 +12,7 @@ import { StatusDot } from '@/components/shared/status-dot'
 import { ConfirmDangerDialog } from '@/components/shared/confirm-danger-dialog'
 import { formatRelativeTime } from '@/lib/format'
 import { useToast } from '@/components/ui/toast'
+import { useI18n } from '@/lib/i18n'
 import {
   useActivateAccount,
   useTestAccount,
@@ -27,6 +28,7 @@ export interface AccountDetailProps {
 }
 
 export function AccountDetail({ account, onClose }: AccountDetailProps) {
+  const { t } = useI18n()
   const { toast } = useToast()
   const [showDelete, setShowDelete] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
@@ -71,7 +73,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
   const handleActivate = () => {
     if (!account?.email) return
     activateMutation.mutate(account.email, {
-      onSuccess: () => toast('Account activated', 'success'),
+      onSuccess: () => toast(t('accountDetail.activated'), 'success'),
       onError: (e) => toast((e as Error).message, 'error'),
     })
   }
@@ -81,7 +83,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
     setTestResult(null)
     testMutation.mutate(account.email, {
       onSuccess: (res) => {
-        setTestResult(res.success ? (res.text || 'Test passed') : (res.error || 'Test failed'))
+        setTestResult(res.success ? (res.text || t('accountDetail.testPassed')) : (res.error || t('accountDetail.testFailed')))
       },
       onError: (e) => setTestResult((e as Error).message),
     })
@@ -93,7 +95,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
       onSuccess: () => {
         setShowDelete(false)
         onClose()
-        toast('Account deleted', 'success')
+        toast(t('accountDetail.deleted'), 'success')
       },
       onError: (e) => toast((e as Error).message, 'error'),
     })
@@ -106,7 +108,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
       {
         onSuccess: () => {
           setEditMode(false)
-          toast('Account updated', 'success')
+          toast(t('accountDetail.updated'), 'success')
         },
         onError: (e) => toast((e as Error).message, 'error'),
       },
@@ -118,7 +120,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
     rotateStickyMutation.mutate(account.email, {
       onSuccess: (res) => {
         const rotatedTo = res.sticky_proxy_account || 'updated'
-        toast(`Sticky proxy rotated to ${rotatedTo}`, 'success')
+        toast(t('accountDetail.stickyRotated', { target: rotatedTo }), 'success')
       },
       onError: (e) => toast((e as Error).message, 'error'),
     })
@@ -168,19 +170,19 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                 >
                   {account.status}
                 </Badge>
-                {account.active && <Badge variant="success">Active</Badge>}
-                {account.disabled && <Badge variant="danger">Disabled</Badge>}
+                {account.active && <Badge variant="success">{t('accountDetail.badgeActive')}</Badge>}
+                {account.disabled && <Badge variant="danger">{t('accountDetail.badgeDisabled')}</Badge>}
                 {account.plan_type && <Badge>{account.plan_type}</Badge>}
-                {account.cooldown_active && <Badge variant="warning">Cooldown</Badge>}
+                {account.cooldown_active && <Badge variant="warning">{t('accountDetail.badgeCooldown')}</Badge>}
               </div>
 
               {/* Actions */}
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" size="sm" onClick={handleActivate} loading={activateMutation.isPending}>
-                  <Zap className="h-3.5 w-3.5" /> Activate
+                  <Zap className="h-3.5 w-3.5" /> {t('accountDetail.actionActivate')}
                 </Button>
                 <Button variant="secondary" size="sm" onClick={handleTest} loading={testMutation.isPending}>
-                  <Play className="h-3.5 w-3.5" /> Test
+                  <Play className="h-3.5 w-3.5" /> {t('accountDetail.actionTest')}
                 </Button>
                 <Button
                   variant="secondary"
@@ -189,13 +191,13 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                   loading={rotateStickyMutation.isPending}
                   disabled={!account.email}
                 >
-                  <RefreshCw className="h-3.5 w-3.5" /> Rotate Sticky
+                  <RefreshCw className="h-3.5 w-3.5" /> {t('accountDetail.actionRotateSticky')}
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => setEditMode(!editMode)}>
-                  {editMode ? 'Cancel Edit' : 'Edit'}
+                  {editMode ? t('accountDetail.actionCancelEdit') : t('accountDetail.actionEdit')}
                 </Button>
                 <Button variant="danger" size="sm" onClick={() => setShowDelete(true)}>
-                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                  <Trash2 className="h-3.5 w-3.5" /> {t('accountDetail.actionDelete')}
                 </Button>
               </div>
 
@@ -208,17 +210,17 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
 
               {/* Edit fields */}
               {editMode && (
-                <Section title="Edit Account">
+                <Section title={t('accountDetail.editSection')}>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-ink">Disabled</span>
+                      <span className="text-sm text-ink">{t('accountDetail.editDisabled')}</span>
                       <Toggle
                         checked={editFields.disabled}
                         onChange={(v) => setEditFields((p) => ({ ...p, disabled: v }))}
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium text-ink">Priority</label>
+                      <label className="text-sm font-medium text-ink">{t('accountDetail.editPriority')}</label>
                       <Input
                         type="number"
                         value={editFields.priority}
@@ -226,7 +228,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium text-ink">Hourly Quota (0 = unlimited)</label>
+                      <label className="text-sm font-medium text-ink">{t('accountDetail.editHourlyQuota')}</label>
                       <Input
                         type="number"
                         value={editFields.hourly_quota}
@@ -234,7 +236,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium text-ink">Max Concurrency</label>
+                      <label className="text-sm font-medium text-ink">{t('accountDetail.editMaxConcurrency')}</label>
                       <Input
                         type="number"
                         value={editFields.max_concurrency}
@@ -242,7 +244,7 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
                       />
                     </div>
                     <Button onClick={handleEditSave} loading={editMutation.isPending}>
-                      Save Changes
+                      {t('accountDetail.saveChanges')}
                     </Button>
                   </div>
                 </Section>
@@ -250,47 +252,47 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
 
               {/* Account Details */}
               <DlSection
-                title="Account Info"
+                title={t('accountDetail.infoSection')}
                 items={[
-                  { label: 'Email', value: account.email ?? '\u2014' },
-                  { label: 'Workspace', value: account.space_name ?? account.workspace ?? '\u2014' },
-                  { label: 'User ID', value: account.user_id ?? '\u2014' },
-                  { label: 'Space ID', value: account.space_id ?? '\u2014' },
-                  { label: 'Plan', value: account.plan_type ?? '\u2014' },
-                  { label: 'Client Version', value: account.client_version ?? '\u2014' },
-                  { label: 'Sticky Proxy Account', value: account.sticky_proxy_account ?? '\u2014' },
+                  { label: t('accountDetail.infoEmail'), value: account.email ?? '\u2014' },
+                  { label: t('accountDetail.infoWorkspace'), value: account.space_name ?? account.workspace ?? '\u2014' },
+                  { label: t('accountDetail.infoUserId'), value: account.user_id ?? '\u2014' },
+                  { label: t('accountDetail.infoSpaceId'), value: account.space_id ?? '\u2014' },
+                  { label: t('accountDetail.infoPlan'), value: account.plan_type ?? '\u2014' },
+                  { label: t('accountDetail.infoClientVersion'), value: account.client_version ?? '\u2014' },
+                  { label: t('accountDetail.infoStickyProxyAccount'), value: account.sticky_proxy_account ?? '\u2014' },
                 ]}
               />
 
               {/* Usage Stats */}
               <DlSection
-                title="Usage Stats"
+                title={t('accountDetail.usageSection')}
                 items={[
-                  { label: 'Priority', value: String(account.priority ?? 100) },
-                  { label: 'Hourly Quota', value: account.hourly_quota ? String(account.hourly_quota) : 'Unlimited' },
-                  { label: 'Max Concurrency', value: String(account.max_concurrency ?? '\u2014') },
-                  { label: 'Window Requests', value: String(account.window_request_count ?? 0) },
-                  { label: 'Total Successes', value: String(account.total_successes ?? 0) },
-                  { label: 'Total Failures', value: String(account.total_failures ?? 0) },
-                  { label: 'Consecutive Failures', value: String(account.consecutive_failures ?? 0) },
+                  { label: t('accountDetail.usagePriority'), value: String(account.priority ?? 100) },
+                  { label: t('accountDetail.usageHourlyQuota'), value: account.hourly_quota ? String(account.hourly_quota) : t('accountDetail.usageUnlimited') },
+                  { label: t('accountDetail.usageMaxConcurrency'), value: String(account.max_concurrency ?? '\u2014') },
+                  { label: t('accountDetail.usageWindowRequests'), value: String(account.window_request_count ?? 0) },
+                  { label: t('accountDetail.usageTotalSuccesses'), value: String(account.total_successes ?? 0) },
+                  { label: t('accountDetail.usageTotalFailures'), value: String(account.total_failures ?? 0) },
+                  { label: t('accountDetail.usageConsecutiveFailures'), value: String(account.consecutive_failures ?? 0) },
                 ]}
               />
 
               {/* Timestamps */}
               <DlSection
-                title="Timestamps"
+                title={t('accountDetail.timestampsSection')}
                 items={[
-                  { label: 'Last Used', value: formatRelativeTime(account.last_used_at ?? account.last_active) },
-                  { label: 'Last Success', value: formatRelativeTime(account.last_success_at) },
-                  { label: 'Last Refresh', value: formatRelativeTime(account.last_refresh_at) },
-                  { label: 'Last Login', value: formatRelativeTime(account.last_login_at) },
-                  { label: 'Created', value: formatRelativeTime(account.created_at) },
+                  { label: t('accountDetail.timeLastUsed'), value: formatRelativeTime(account.last_used_at ?? account.last_active) },
+                  { label: t('accountDetail.timeLastSuccess'), value: formatRelativeTime(account.last_success_at) },
+                  { label: t('accountDetail.timeLastRefresh'), value: formatRelativeTime(account.last_refresh_at) },
+                  { label: t('accountDetail.timeLastLogin'), value: formatRelativeTime(account.last_login_at) },
+                  { label: t('accountDetail.timeCreated'), value: formatRelativeTime(account.created_at) },
                 ]}
               />
 
               {/* Last Error */}
               {account.last_error && (
-                <Section title="Last Error">
+                <Section title={t('accountDetail.lastErrorSection')}>
                   <p className="text-sm text-danger font-mono break-all">{account.last_error}</p>
                 </Section>
               )}
@@ -305,8 +307,8 @@ export function AccountDetail({ account, onClose }: AccountDetailProps) {
         onClose={() => setShowDelete(false)}
         onConfirm={handleDelete}
         loading={deleteMutation.isPending}
-        title="Delete account?"
-        description={`This will permanently remove ${account?.email ?? 'this account'}.`}
+        title={t('accountDetail.deleteTitle')}
+        description={t('accountDetail.deleteDesc', { name: account?.email ?? t('accounts.colAccount') })}
       />
     </>
   )

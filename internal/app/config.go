@@ -22,6 +22,8 @@ type FeatureConfig struct {
 	UseReadOnlyMode            bool     `json:"use_read_only_mode"`
 	ForceDisableUpstreamEdits  bool     `json:"force_disable_upstream_edits"`
 	ForceFreshThreadPerRequest bool     `json:"force_fresh_thread_per_request"`
+	ReasoningStreamDefault     bool     `json:"reasoning_stream_default,omitempty"`
+	ReasoningExposeDefault     bool     `json:"reasoning_expose_default,omitempty"`
 	UseSurfHelperTransport     bool     `json:"use_surf_helper_transport,omitempty"`
 	WriterMode                 bool     `json:"writer_mode"`
 	EnableGenerateImage        bool     `json:"enable_generate_image"`
@@ -535,6 +537,8 @@ func defaultConfig() AppConfig {
 			UseReadOnlyMode:            false,
 			ForceDisableUpstreamEdits:  false,
 			ForceFreshThreadPerRequest: false,
+			ReasoningStreamDefault:     false,
+			ReasoningExposeDefault:     false,
 			UseSurfHelperTransport:     false,
 			WriterMode:                 false,
 			EnableGenerateImage:        true,

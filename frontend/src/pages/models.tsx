@@ -7,15 +7,17 @@ import { ErrorState } from '@/components/shared/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import { useI18n } from '@/lib/i18n'
 import { Box } from 'lucide-react'
 
 export function ModelsPage() {
+  const { t } = useI18n()
   const models = useModels()
 
   if (models.isLoading) {
     return (
       <>
-        <Topbar title="Models" />
+        <Topbar title={t('models.topbar')} />
         <div className="p-6 space-y-4">
           <Skeleton className="h-9 w-48" />
           <Skeleton className="h-[400px]" />
@@ -27,8 +29,8 @@ export function ModelsPage() {
   if (models.isError) {
     return (
       <>
-        <Topbar title="Models" />
-        <ErrorState message="Failed to load models" onRetry={() => models.refetch()} />
+        <Topbar title={t('models.topbar')} />
+        <ErrorState message={t('models.loadFailed')} onRetry={() => models.refetch()} />
       </>
     )
   }
@@ -37,30 +39,30 @@ export function ModelsPage() {
 
   return (
     <>
-      <Topbar title="Models" />
+      <Topbar title={t('models.topbar')} />
       <div className="p-6 space-y-6">
         <PageHeader
-          title="Available Models"
-          description={`${total} models configured`}
+          title={t('models.pageTitle')}
+          description={t('models.pageDesc', { count: total })}
         />
 
         {/* Models Table */}
         {list.length === 0 ? (
           <EmptyState
             icon={<Box className="h-10 w-10" />}
-            title="No models configured"
-            description="Add models in the settings to get started"
+            title={t('models.emptyTitle')}
+            description={t('models.emptyDesc')}
           />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Model ID</TableHead>
-                <TableHead>Provider</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Aliases</TableHead>
-                <TableHead>Requests</TableHead>
+                <TableHead>{t('models.colName')}</TableHead>
+                <TableHead>{t('models.colModelID')}</TableHead>
+                <TableHead>{t('models.colProvider')}</TableHead>
+                <TableHead>{t('models.colStatus')}</TableHead>
+                <TableHead>{t('models.colAliases')}</TableHead>
+                <TableHead>{t('models.colRequests')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -82,7 +84,7 @@ export function ModelsPage() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={model.enabled ? 'success' : 'default'}>
-                      {model.enabled ? 'Enabled' : 'Disabled'}
+                      {model.enabled ? t('models.enabled') : t('models.disabled')}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -106,7 +108,7 @@ export function ModelsPage() {
 
         {/* Aliases section */}
         {aliases && Object.keys(aliases).length > 0 && (
-          <Section title="Model Aliases">
+          <Section title={t('models.aliasSection')}>
             <div className="rounded-[var(--radius-card)] border border-hairline bg-canvas">
               <div className="divide-y divide-hairline">
                 {Object.entries(aliases).map(([alias, target]) => (

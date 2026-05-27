@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
 import { useStartEmailLogin, useVerifyEmailLogin } from '@/lib/hooks/use-accounts'
+import { useI18n } from '@/lib/i18n'
 
 type Step = 'email' | 'code' | 'done'
 
@@ -14,6 +15,7 @@ export function EmailLoginDialog({
   open: boolean
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
@@ -38,7 +40,7 @@ export function EmailLoginDialog({
         if (res.success) {
           setStep('code')
         } else {
-          setError(res.message || 'Failed to start login')
+          setError(res.message || t('emailLogin.startFailed'))
         }
       },
       onError: (e) => setError((e as Error).message),
@@ -54,7 +56,7 @@ export function EmailLoginDialog({
           if (res.success) {
             setStep('done')
           } else {
-            setError(res.message || 'Verification failed')
+            setError(res.message || t('emailLogin.verifyFailed'))
           }
         },
         onError: (e) => setError((e as Error).message),
@@ -63,29 +65,29 @@ export function EmailLoginDialog({
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title="Email Login">
+    <Dialog open={open} onClose={onClose} title={t('emailLogin.title')}>
       <div className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
 
         {step === 'email' && (
           <>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-ink">Notion Email</label>
+              <label className="text-sm font-medium text-ink">{t('emailLogin.notionEmail')}</label>
               <Input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="alice@example.com"
+                placeholder={t('emailLogin.emailPlaceholder')}
                 onKeyDown={(e) => e.key === 'Enter' && email && handleStart()}
               />
             </div>
             <p className="text-xs text-ink-mute">
-              A temporary login code will be sent to this email via Notion.
+              {t('emailLogin.codeWillBeSent')}
             </p>
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
               <Button onClick={handleStart} disabled={!email} loading={startMutation.isPending}>
-                Send Code
+                {t('emailLogin.sendCode')}
               </Button>
             </div>
           </>
@@ -94,21 +96,21 @@ export function EmailLoginDialog({
         {step === 'code' && (
           <>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-ink">Verification Code</label>
+              <label className="text-sm font-medium text-ink">{t('emailLogin.verifyCode')}</label>
               <Input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                placeholder="Enter code from email..."
+                placeholder={t('emailLogin.codePlaceholder')}
                 onKeyDown={(e) => e.key === 'Enter' && code && handleVerify()}
               />
             </div>
             <p className="text-xs text-ink-mute">
-              Check your email ({email}) for the code from Notion.
+              {t('emailLogin.checkEmailCode', { email })}
             </p>
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setStep('email')}>Back</Button>
+              <Button variant="secondary" onClick={() => setStep('email')}>{t('common.back')}</Button>
               <Button onClick={handleVerify} disabled={!code} loading={verifyMutation.isPending}>
-                Verify
+                {t('emailLogin.verify')}
               </Button>
             </div>
           </>
@@ -116,9 +118,9 @@ export function EmailLoginDialog({
 
         {step === 'done' && (
           <>
-            <p className="text-sm text-ink">Account added successfully!</p>
+            <p className="text-sm text-ink">{t('emailLogin.success')}</p>
             <div className="flex justify-end">
-              <Button onClick={onClose}>Done</Button>
+              <Button onClick={onClose}>{t('common.done')}</Button>
             </div>
           </>
         )}

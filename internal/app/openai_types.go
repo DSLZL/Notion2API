@@ -47,6 +47,7 @@ type responsesRequestBody struct {
 	Tools              any    `json:"tools,omitempty"`
 	Input              any    `json:"input,omitempty"`
 	Attachments        any    `json:"attachments,omitempty"`
+	ShowThoughts       *bool  `json:"show_thoughts,omitempty"`
 }
 
 func trimStringSlice(values []string) []string {
@@ -166,6 +167,10 @@ func extractResponsesRequestBody(payload map[string]any) responsesRequestBody {
 	if value, ok := parseBoolField(payload["use_web_search"]); ok {
 		copyValue := value
 		body.UseWebSearch = &copyValue
+	}
+	if value, ok := parseBoolField(payload["show_thoughts"]); ok {
+		copyValue := value
+		body.ShowThoughts = &copyValue
 	}
 	body.Metadata = payload["metadata"]
 	body.Tools = payload["tools"]

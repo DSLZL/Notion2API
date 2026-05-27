@@ -1242,6 +1242,10 @@ func buildTrace(result InferenceResult) map[string]any {
 		"completed_time":    result.CompletedTime,
 		"ndjson_line_count": result.NDJSONLineCount,
 		"notion_model":      result.NotionModel,
+		"upstream_patch_line_count": result.UpstreamPatchLineCount,
+		"reasoning_streamed_chars":  result.ReasoningStreamedChars,
+		"reasoning_suppressed":      result.ReasoningSuppressed,
+		"patch_fallback_count":      result.PatchFallbackCount,
 	}
 	if strings.TrimSpace(result.AccountEmail) != "" {
 		trace["account_email"] = result.AccountEmail

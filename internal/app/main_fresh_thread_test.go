@@ -1173,6 +1173,14 @@ func TestExtractTypedRequestBodies(t *testing.T) {
 	if _, ok := respTyped.Attachments.([]any); !ok {
 		t.Fatalf("expected typed responses attachments to keep raw array type")
 	}
+	respShowTyped := extractResponsesRequestBody(map[string]any{
+		"model":         "gpt-5.4",
+		"input":         []any{map[string]any{"type": "text", "text": "hello"}},
+		"show_thoughts": true,
+	})
+	if respShowTyped.ShowThoughts == nil || !*respShowTyped.ShowThoughts {
+		t.Fatalf("expected typed responses show_thoughts=true")
+	}
 }
 
 func TestExtractChatTypedStreamIncludeUsageParsing(t *testing.T) {
@@ -1291,6 +1299,199 @@ func TestTypedEnvelopeExtractionFallsBackToLegacyWhenTypedFieldsMissing(t *testi
 	}
 	if captured.PublicModel != "gpt-5.4" {
 		t.Fatalf("expected resolved model from legacy payload path, got %q", captured.PublicModel)
+	}
+}
+
+func TestHandleChatCompletionsReasoningDefaultsDisabledByDefault(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.APIKey = "test-api-key"
+	cfg.Storage.SQLitePath = ""
+	state, err := newServerState(cfg)
+	if err != nil {
+		t.Fatalf("newServerState failed: %v", err)
+	}
+	defer func() {
+		_ = state.Close()
+	}()
+	app := &App{State: state}
+
+	var captured PromptRunRequest
+	app.runPromptOverride = func(_ *http.Request, request PromptRunRequest) (InferenceResult, error) {
+		captured = request
+		return InferenceResult{
+			Text:         "ok",
+			ThreadID:     "thread-default-reasoning",
+			AccountEmail: "seed@example.com",
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", mustJSONBody(t, map[string]any{
+		"model": "gpt-5.4",
+		"messages": []map[string]any{
+			{"role": "user", "content": "hello"},
+		},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !captured.SuppressReasoningOutput {
+		t.Fatalf("expected reasoning suppressed by default")
+	}
+	if captured.StreamReasoningWarmup {
+		t.Fatalf("expected no reasoning warmup by default")
+	}
+}
+
+func TestHandleChatCompletionsShowThoughtsOverridesReasoningDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.APIKey = "test-api-key"
+	cfg.Storage.SQLitePath = ""
+	cfg.Features.ReasoningExposeDefault = false
+	cfg.Features.ReasoningStreamDefault = false
+	state, err := newServerState(cfg)
+	if err != nil {
+		t.Fatalf("newServerState failed: %v", err)
+	}
+	defer func() {
+		_ = state.Close()
+	}()
+	app := &App{State: state}
+
+	var captured PromptRunRequest
+	app.runPromptStreamSinkOverride = func(_ *http.Request, request PromptRunRequest, sink InferenceStreamSink) (InferenceResult, error) {
+		captured = request
+		if sink.ReasoningWarmup != nil {
+			if err := sink.ReasoningWarmup(); err != nil {
+				return InferenceResult{}, err
+			}
+		}
+		if sink.Reasoning != nil {
+			if err := sink.Reasoning("thinking..."); err != nil {
+				return InferenceResult{}, err
+			}
+		}
+		if sink.Text != nil {
+			if err := sink.Text("ok"); err != nil {
+				return InferenceResult{}, err
+			}
+		}
+		return InferenceResult{
+			Text:         "ok",
+			ThreadID:     "thread-show-thoughts",
+			AccountEmail: "seed@example.com",
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", mustJSONBody(t, map[string]any{
+		"model":         "gpt-5.4",
+		"stream":        true,
+		"show_thoughts": true,
+		"messages": []map[string]any{
+			{"role": "user", "content": "hello"},
+		},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if captured.SuppressReasoningOutput {
+		t.Fatalf("expected show_thoughts=true to expose reasoning output")
+	}
+	if !captured.StreamReasoningWarmup {
+		t.Fatalf("expected show_thoughts=true to enable reasoning warmup for stream")
+	}
+}
+
+func TestHandleResponsesReasoningFollowsConfigAndRequestOverride(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.APIKey = "test-api-key"
+	cfg.Storage.SQLitePath = ""
+	cfg.Features.ReasoningExposeDefault = true
+	cfg.Features.ReasoningStreamDefault = true
+	state, err := newServerState(cfg)
+	if err != nil {
+		t.Fatalf("newServerState failed: %v", err)
+	}
+	defer func() {
+		_ = state.Close()
+	}()
+	app := &App{State: state}
+
+	captured := []PromptRunRequest{}
+	app.runPromptStreamSinkOverride = func(_ *http.Request, request PromptRunRequest, sink InferenceStreamSink) (InferenceResult, error) {
+		captured = append(captured, request)
+		if sink.ReasoningWarmup != nil {
+			if err := sink.ReasoningWarmup(); err != nil {
+				return InferenceResult{}, err
+			}
+		}
+		if sink.Reasoning != nil {
+			if err := sink.Reasoning("thinking"); err != nil {
+				return InferenceResult{}, err
+			}
+		}
+		if sink.Text != nil {
+			if err := sink.Text("ok"); err != nil {
+				return InferenceResult{}, err
+			}
+		}
+		return InferenceResult{
+			Text:         "ok",
+			ThreadID:     "thread-responses-reasoning",
+			AccountEmail: "seed@example.com",
+		}, nil
+	}
+
+	req1 := httptest.NewRequest(http.MethodPost, "/v1/responses", mustJSONBody(t, map[string]any{
+		"model":  "gpt-5.4",
+		"stream": true,
+		"input":  "hello",
+	}))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("Authorization", "Bearer test-api-key")
+	rec1 := httptest.NewRecorder()
+	app.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("unexpected first status: got %d body=%s", rec1.Code, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/responses", mustJSONBody(t, map[string]any{
+		"model":         "gpt-5.4",
+		"stream":        true,
+		"show_thoughts": false,
+		"input":         "hello again",
+	}))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer test-api-key")
+	rec2 := httptest.NewRecorder()
+	app.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("unexpected second status: got %d body=%s", rec2.Code, rec2.Body.String())
+	}
+
+	if len(captured) != 2 {
+		t.Fatalf("expected two captured requests, got %d", len(captured))
+	}
+	if captured[0].SuppressReasoningOutput {
+		t.Fatalf("expected config reasoning_expose_default=true to expose reasoning")
+	}
+	if !captured[0].StreamReasoningWarmup {
+		t.Fatalf("expected config reasoning_stream_default=true to enable warmup")
+	}
+	if !captured[1].SuppressReasoningOutput {
+		t.Fatalf("expected show_thoughts=false override to suppress reasoning")
+	}
+	if captured[1].StreamReasoningWarmup {
+		t.Fatalf("expected show_thoughts=false override to disable warmup")
 	}
 }
 
@@ -1735,6 +1936,94 @@ func TestHandleChatCompletionsStreamIncludeUsageFromTypedMessages(t *testing.T) 
 	body := rec.Body.String()
 	if !strings.Contains(body, "\"usage\"") {
 		t.Fatalf("expected stream output to include usage chunk, got body=%s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("expected stream done marker, got body=%s", body)
+	}
+}
+
+func TestHandleResponsesStreamWritesDoneAndCompletedEvents(t *testing.T) {
+	app := newFreshThreadTestApp(t)
+	app.runPromptStreamSinkOverride = func(_ *http.Request, _ PromptRunRequest, sink InferenceStreamSink) (InferenceResult, error) {
+		if sink.Text != nil {
+			if err := sink.Text("hello "); err != nil {
+				t.Fatalf("stream text write failed: %v", err)
+			}
+			if err := sink.Text("world"); err != nil {
+				t.Fatalf("stream text write failed: %v", err)
+			}
+		}
+		if sink.Reasoning != nil {
+			if err := sink.Reasoning("thinking"); err != nil {
+				t.Fatalf("stream reasoning write failed: %v", err)
+			}
+		}
+		return InferenceResult{
+			Text:         "hello world",
+			Reasoning:    "thinking",
+			Prompt:       "hello world",
+			ThreadID:     "thread-responses-stream",
+			MessageID:    "msg-responses-stream",
+			AccountEmail: "seed@example.com",
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", mustJSONBody(t, map[string]any{
+		"model":         "gpt-5.4",
+		"stream":        true,
+		"show_thoughts": true,
+		"input":         "hello",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.output_text.delta") {
+		t.Fatalf("expected responses text delta event, got body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.reasoning.delta") {
+		t.Fatalf("expected responses reasoning delta event, got body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.completed") {
+		t.Fatalf("expected responses completed event, got body=%s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("expected stream done marker, got body=%s", body)
+	}
+}
+
+func TestHandleResponsesStreamWritesFailedEventAndDoneAfterHeadersSent(t *testing.T) {
+	app := newFreshThreadTestApp(t)
+	app.runPromptStreamSinkOverride = func(_ *http.Request, _ PromptRunRequest, sink InferenceStreamSink) (InferenceResult, error) {
+		if sink.KeepAlive != nil {
+			if err := sink.KeepAlive(); err != nil {
+				t.Fatalf("keepalive failed: %v", err)
+			}
+		}
+		return InferenceResult{}, fmt.Errorf("upstream exploded")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", mustJSONBody(t, map[string]any{
+		"model":  "gpt-5.4",
+		"stream": true,
+		"input":  "hello",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.failed") || !strings.Contains(body, "upstream exploded") {
+		t.Fatalf("expected responses failed event payload, got body=%s", body)
 	}
 	if !strings.Contains(body, "data: [DONE]") {
 		t.Fatalf("expected stream done marker, got body=%s", body)

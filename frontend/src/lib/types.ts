@@ -145,6 +145,27 @@ export interface ConversationsResponse {
   total: number
 }
 
+// ---- Agents ----
+export interface AgentModel {
+  type?: string
+}
+
+export interface AgentEntry {
+  id: string
+  name?: string
+  icon?: string
+  alive: boolean
+  model?: AgentModel
+  thread_id?: string
+  activity_score?: string
+  last_transcript?: Record<string, unknown>
+}
+
+export interface AgentsResponse {
+  success: boolean
+  items?: AgentEntry[]
+}
+
 // ---- Settings ----
 export interface SettingsResponse {
   [key: string]: unknown

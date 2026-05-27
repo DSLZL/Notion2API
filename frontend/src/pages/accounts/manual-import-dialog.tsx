@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
 import { useManualImport } from '@/lib/hooks/use-accounts'
+import { useI18n } from '@/lib/i18n'
 
 export function ManualImportDialog({
   open,
@@ -12,6 +13,7 @@ export function ManualImportDialog({
   open: boolean
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const [mode, setMode] = useState<'cookie' | 'probe'>('cookie')
   const [value, setValue] = useState('')
   const [error, setError] = useState('')
@@ -37,7 +39,7 @@ export function ManualImportDialog({
         if (res.success) {
           onClose()
         } else {
-          setError(res.message || 'Import failed')
+          setError(res.message || t('manualImport.failed'))
         }
       },
       onError: (e) => setError((e as Error).message),
@@ -45,7 +47,7 @@ export function ManualImportDialog({
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title="Manual Import">
+    <Dialog open={open} onClose={onClose} title={t('manualImport.title')}>
       <div className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
 
@@ -55,46 +57,46 @@ export function ManualImportDialog({
             size="sm"
             onClick={() => { setMode('cookie'); setValue('') }}
           >
-            Cookie Header
+            {t('manualImport.modeCookie')}
           </Button>
           <Button
             variant={mode === 'probe' ? 'primary' : 'secondary'}
             size="sm"
             onClick={() => { setMode('probe'); setValue('') }}
           >
-            Probe JSON
+            {t('manualImport.modeProbe')}
           </Button>
         </div>
 
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-ink">
-            {mode === 'cookie' ? 'Cookie Header' : 'Probe JSON'}
+            {mode === 'cookie' ? t('manualImport.fieldCookie') : t('manualImport.fieldProbe')}
           </label>
           <Textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder={
               mode === 'cookie'
-                ? 'Paste the Cookie header value...'
-                : 'Paste the probe.json content...'
+                ? t('manualImport.placeholderCookie')
+                : t('manualImport.placeholderProbe')
             }
             rows={6}
           />
           <p className="text-xs text-ink-mute">
             {mode === 'cookie'
-              ? 'Copy the Cookie header from browser DevTools (Network tab).'
-              : 'Paste the full content of the probe.json file.'}
+              ? t('manualImport.helpCookie')
+              : t('manualImport.helpProbe')}
           </p>
         </div>
 
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
           <Button
             onClick={handleImport}
             disabled={!value.trim()}
             loading={importMutation.isPending}
           >
-            Import
+            {t('common.import')}
           </Button>
         </div>
       </div>

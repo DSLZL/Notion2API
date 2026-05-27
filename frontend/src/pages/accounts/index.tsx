@@ -14,6 +14,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { StatusDot } from '@/components/shared/status-dot'
 import { formatRelativeTime } from '@/lib/format'
 import { useToast } from '@/components/ui/toast'
+import { useI18n } from '@/lib/i18n'
 import { Search, Users, Plus, Upload, RefreshCw } from 'lucide-react'
 import { AccountDetail } from './account-detail'
 import { EmailLoginDialog } from './email-login-dialog'
@@ -28,13 +29,14 @@ function accountStatusVariant(account: AccountItem): 'success' | 'danger' | 'war
   return 'default'
 }
 
-function accountStatusLabel(account: AccountItem): string {
-  if (account.disabled) return 'Disabled'
-  if (account.cooldown_active) return 'Cooldown'
+function accountStatusLabel(account: AccountItem, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (account.disabled) return t('accounts.statusDisabled')
+  if (account.cooldown_active) return t('accounts.statusCooldown')
   return account.status
 }
 
 export function AccountsPage() {
+  const { t } = useI18n()
   const accounts = useAccounts()
   const batchUpdate = useBatchUpdateAccounts()
   const { toast } = useToast()
@@ -78,7 +80,12 @@ export function AccountsPage() {
         onSuccess: (result) => {
           setSelectedEmails([])
           setPendingBatchAction(null)
-          toast(`${result.updated} account(s) ${pendingBatchAction === 'disable' ? 'disabled' : 'enabled'}`, 'success')
+          toast(
+            pendingBatchAction === 'disable'
+              ? t('accounts.batchUpdatedDisabled', { count: result.updated })
+              : t('accounts.batchUpdatedEnabled', { count: result.updated }),
+            'success',
+          )
         },
         onError: (error) => {
           toast((error as Error).message, 'error')
@@ -90,7 +97,7 @@ export function AccountsPage() {
   if (accounts.isLoading) {
     return (
       <>
-        <Topbar title="Accounts" />
+        <Topbar title={t('accounts.topbar')} />
         <div className="p-6 space-y-4">
           <Skeleton className="h-9 w-64" />
           <Skeleton className="h-[400px]" />
@@ -102,29 +109,29 @@ export function AccountsPage() {
   if (accounts.isError) {
     return (
       <>
-        <Topbar title="Accounts" />
-        <ErrorState message="Failed to load accounts" onRetry={() => accounts.refetch()} />
+        <Topbar title={t('accounts.topbar')} />
+        <ErrorState message={t('accounts.loadFailed')} onRetry={() => accounts.refetch()} />
       </>
     )
   }
 
   return (
     <>
-      <Topbar title="Accounts" />
+      <Topbar title={t('accounts.topbar')} />
       <div className="p-6 space-y-4">
         <PageHeader
-          title="Notion Accounts"
-          description={`${accounts.data?.total ?? 0} accounts connected`}
+          title={t('accounts.pageTitle')}
+          description={t('accounts.pageDesc', { count: accounts.data?.total ?? 0 })}
           actions={
             <div className="flex gap-2">
               <Button variant="ghost" size="sm" onClick={() => accounts.refetch()}>
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setShowEmailLogin(true)}>
-                <Plus className="h-3.5 w-3.5" /> Email Login
+                <Plus className="h-3.5 w-3.5" /> {t('accounts.emailLogin')}
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setShowManualImport(true)}>
-                <Upload className="h-3.5 w-3.5" /> Manual Import
+                <Upload className="h-3.5 w-3.5" /> {t('accounts.manualImport')}
               </Button>
             </div>
           }
@@ -132,14 +139,14 @@ export function AccountsPage() {
 
         {selectedCount > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-card)] border border-hairline bg-canvas-soft px-4 py-3">
-            <span className="text-sm text-ink-mute">{selectedCount} selected</span>
+            <span className="text-sm text-ink-mute">{t('accounts.selectedCount', { count: selectedCount })}</span>
             <Button
               variant="secondary"
               size="sm"
               onClick={() => setPendingBatchAction('enable')}
               loading={batchUpdate.isPending && pendingBatchAction === 'enable'}
             >
-              Enable selected
+              {t('accounts.enableSelected')}
             </Button>
             <Button
               variant="secondary"
@@ -147,7 +154,7 @@ export function AccountsPage() {
               onClick={() => setPendingBatchAction('disable')}
               loading={batchUpdate.isPending && pendingBatchAction === 'disable'}
             >
-              Disable selected
+              {t('accounts.disableSelected')}
             </Button>
           </div>
         )}
@@ -156,7 +163,7 @@ export function AccountsPage() {
         <div className="relative max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-mute-2" />
           <Input
-            placeholder="Search accounts..."
+            placeholder={t('accounts.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -167,8 +174,8 @@ export function AccountsPage() {
         {filtered.length === 0 ? (
           <EmptyState
             icon={<Users className="h-10 w-10" />}
-            title={search ? 'No matching accounts' : 'No accounts'}
-            description={search ? 'Try a different search term' : 'Connect a Notion account to get started'}
+            title={search ? t('accounts.emptyFilteredTitle') : t('accounts.emptyTitle')}
+            description={search ? t('accounts.emptyFilteredDesc') : t('accounts.emptyDesc')}
           />
         ) : (
           <Table>
@@ -178,16 +185,16 @@ export function AccountsPage() {
                   <Checkbox
                     checked={allSelected}
                     onChange={(e) => toggleAll(e.target.checked)}
-                    aria-label="Select all accounts"
+                    aria-label={t('accounts.selectAllAria')}
                   />
                 </TableHead>
-                <TableHead>Account</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Workspace</TableHead>
-                <TableHead className="text-right">Priority</TableHead>
-                <TableHead className="text-right">Quota</TableHead>
-                <TableHead className="text-right">Requests</TableHead>
-                <TableHead>Last Active</TableHead>
+                <TableHead>{t('accounts.colAccount')}</TableHead>
+                <TableHead>{t('accounts.colStatus')}</TableHead>
+                <TableHead>{t('accounts.colWorkspace')}</TableHead>
+                <TableHead className="text-right">{t('accounts.colPriority')}</TableHead>
+                <TableHead className="text-right">{t('accounts.colQuota')}</TableHead>
+                <TableHead className="text-right">{t('accounts.colRequests')}</TableHead>
+                <TableHead>{t('accounts.colLastActive')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -202,7 +209,7 @@ export function AccountsPage() {
                       checked={account.email ? selectedEmails.includes(account.email) : false}
                       disabled={!account.email}
                       onChange={(e) => account.email && toggleEmail(account.email, e.target.checked)}
-                      aria-label={`Select ${account.email ?? account.name}`}
+                      aria-label={t('accounts.selectAccountAria', { name: account.email ?? account.name })}
                     />
                   </TableCell>
                   <TableCell>
@@ -210,7 +217,7 @@ export function AccountsPage() {
                       <p className="font-medium text-ink">
                         {account.user_name || account.name}
                         {account.active && (
-                          <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-primary align-middle" title="Active session" />
+                          <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-primary align-middle" title={t('accounts.activeSessionTitle')} />
                         )}
                       </p>
                       {account.email && (
@@ -222,7 +229,7 @@ export function AccountsPage() {
                     <div className="flex items-center gap-1.5">
                       <StatusDot status={accountStatusVariant(account) === 'success' ? 'active' : accountStatusVariant(account) === 'danger' ? 'error' : accountStatusVariant(account)} />
                       <Badge variant={accountStatusVariant(account)}>
-                        {accountStatusLabel(account)}
+                        {accountStatusLabel(account, t)}
                       </Badge>
                     </div>
                   </TableCell>
@@ -264,9 +271,12 @@ export function AccountsPage() {
         open={pendingBatchAction !== null}
         onClose={() => setPendingBatchAction(null)}
         onConfirm={handleBatchConfirm}
-        title={pendingBatchAction === 'disable' ? 'Disable selected accounts?' : 'Enable selected accounts?'}
-        description={`This will ${pendingBatchAction ?? 'update'} ${selectedCount} selected account(s).`}
-        confirmLabel={pendingBatchAction === 'disable' ? 'Disable' : 'Enable'}
+        title={pendingBatchAction === 'disable' ? t('accounts.batchDisableTitle') : t('accounts.batchEnableTitle')}
+        description={t('accounts.batchDesc', {
+          action: pendingBatchAction === 'disable' ? t('accounts.batchActionDisable') : t('accounts.batchActionEnable'),
+          count: selectedCount,
+        })}
+        confirmLabel={pendingBatchAction === 'disable' ? t('accounts.batchActionDisable') : t('accounts.batchActionEnable')}
         loading={batchUpdate.isPending}
       />
     </>

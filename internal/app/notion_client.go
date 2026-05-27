@@ -258,22 +258,26 @@ type UploadedAttachment struct {
 }
 
 type InferenceResult struct {
-	Prompt           string               `json:"prompt"`
-	Model            string               `json:"model"`
-	NotionModel      string               `json:"notion_model"`
-	AccountEmail     string               `json:"account_email,omitempty"`
-	ThreadID         string               `json:"thread_id"`
-	TraceID          string               `json:"trace_id"`
-	Text             string               `json:"text"`
-	Reasoning        string               `json:"reasoning,omitempty"`
-	MessageID        string               `json:"message_id"`
-	CompletedTime    any                  `json:"completed_time,omitempty"`
-	NDJSONLineCount  int                  `json:"ndjson_line_count"`
-	RawMessageIDs    []string             `json:"raw_message_ids,omitempty"`
-	Attachments      []UploadedAttachment `json:"attachments,omitempty"`
-	ConfigID         string               `json:"config_id,omitempty"`
-	ContextID        string               `json:"context_id,omitempty"`
-	OriginalDatetime string               `json:"original_datetime,omitempty"`
+	Prompt                 string               `json:"prompt"`
+	Model                  string               `json:"model"`
+	NotionModel            string               `json:"notion_model"`
+	AccountEmail           string               `json:"account_email,omitempty"`
+	ThreadID               string               `json:"thread_id"`
+	TraceID                string               `json:"trace_id"`
+	Text                   string               `json:"text"`
+	Reasoning              string               `json:"reasoning,omitempty"`
+	MessageID              string               `json:"message_id"`
+	CompletedTime          any                  `json:"completed_time,omitempty"`
+	NDJSONLineCount        int                  `json:"ndjson_line_count"`
+	UpstreamPatchLineCount int                  `json:"upstream_patch_line_count,omitempty"`
+	ReasoningStreamedChars int                  `json:"reasoning_streamed_chars,omitempty"`
+	ReasoningSuppressed    bool                 `json:"reasoning_suppressed,omitempty"`
+	PatchFallbackCount     int                  `json:"patch_fallback_count,omitempty"`
+	RawMessageIDs          []string             `json:"raw_message_ids,omitempty"`
+	Attachments            []UploadedAttachment `json:"attachments,omitempty"`
+	ConfigID               string               `json:"config_id,omitempty"`
+	ContextID              string               `json:"context_id,omitempty"`
+	OriginalDatetime       string               `json:"original_datetime,omitempty"`
 }
 
 type InferenceTranscriptSummary struct {
@@ -283,6 +287,28 @@ type InferenceTranscriptSummary struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 	CreatedByDisplay string    `json:"created_by_display_name,omitempty"`
 	TranscriptType   string    `json:"type,omitempty"`
+}
+
+type CustomAgentModel struct {
+	Type string `json:"type,omitempty"`
+}
+
+type CustomAgentSummary struct {
+	ID                string           `json:"id"`
+	Name              string           `json:"name,omitempty"`
+	Icon              string           `json:"icon,omitempty"`
+	Alive             bool             `json:"alive"`
+	Model             CustomAgentModel `json:"model,omitempty"`
+	ThreadID          string           `json:"thread_id,omitempty"`
+	LastActivityScore string           `json:"activity_score,omitempty"`
+	LastTranscript    map[string]any   `json:"last_transcript,omitempty"`
+	RawWorkflowData   map[string]any   `json:"raw_workflow_data,omitempty"`
+}
+
+type CustomAgentMutationRequest struct {
+	Name      string `json:"name,omitempty"`
+	Icon      string `json:"icon,omitempty"`
+	ModelType string `json:"model_type,omitempty"`
 }
 
 type PromptRunRequest struct {
@@ -395,15 +421,16 @@ func (e *notionAPIError) Error() string {
 }
 
 type NotionAIClient struct {
-	Session                     SessionInfo
-	Config                      AppConfig
-	AccountEmail                string
-	ProxyResolver               *ProxyResolver
-	Timeout                     time.Duration
-	PollInterval                time.Duration
-	PollMaxRounds               int
-	HTTPClient                  *http.Client
-	browserRunInferenceFallback func(context.Context, map[string]any) (string, error)
+	Session                           SessionInfo
+	Config                            AppConfig
+	AccountEmail                      string
+	ProxyResolver                     *ProxyResolver
+	Timeout                           time.Duration
+	PollInterval                      time.Duration
+	PollMaxRounds                     int
+	HTTPClient                        *http.Client
+	browserRunInferenceStreamFallback func(context.Context, map[string]any) (io.ReadCloser, error)
+	browserRunInferenceFallback       func(context.Context, map[string]any) (string, error)
 }
 
 type ndjsonPatchOperation struct {
@@ -414,6 +441,7 @@ type ndjsonPatchOperation struct {
 
 type ndjsonStreamLine struct {
 	Type       string                      `json:"type"`
+	Data       map[string]any              `json:"data,omitempty"`
 	V          []ndjsonPatchOperation      `json:"v,omitempty"`
 	RecordMap  map[string]any              `json:"recordMap,omitempty"`
 	ID         string                      `json:"id,omitempty"`
@@ -443,23 +471,27 @@ type ndjsonStepState struct {
 }
 
 type ndjsonParseResult struct {
-	LineCount  int
-	MessageIDs []string
-	FinalAgent agentMessage
-	Reasoning  string
+	LineCount              int
+	MessageIDs             []string
+	FinalAgent             agentMessage
+	Reasoning              string
+	PatchLineCount         int
+	ReasoningStreamedChars int
+	PatchFallbackCount     int
 }
 
 type ndjsonTranscriptState struct {
-	LineCount        int
-	Steps            []ndjsonStepState
-	ActiveAgentIndex int
-	EmittedText      string
-	EmittedReasoning string
-	MessageIDs       []string
-	FinalAgent       agentMessage
-	patchValueTypes  map[string]string
-	patchValueText   map[string]string
-	patchValueCounts map[string]int
+	LineCount          int
+	Steps              []ndjsonStepState
+	ActiveAgentIndex   int
+	EmittedText        string
+	EmittedReasoning   string
+	MessageIDs         []string
+	FinalAgent         agentMessage
+	patchValueTypes    map[string]string
+	patchValueText     map[string]string
+	patchValueCounts   map[string]int
+	PatchFallbackCount int
 }
 
 func (s *ndjsonTranscriptState) hasTerminalAnswer() bool {
@@ -857,6 +889,8 @@ func (c *NotionAIClient) requestReferer(url string, payload map[string]any) stri
 		return c.chatReferer(c.requestThreadID(payload))
 	case strings.Contains(endpoint, "getInferenceTranscriptsForUser"):
 		return c.Config.NotionUpstream().AIURL()
+	case strings.Contains(endpoint, "getCustomAgents"):
+		return c.Config.NotionUpstream().AIURL()
 	default:
 		return c.Config.NotionUpstream().AIURL()
 	}
@@ -1151,6 +1185,10 @@ func (c *NotionAIClient) runInferenceTranscriptInBrowser(ctx context.Context, pa
 	return runInferenceTranscriptInBrowser(ctx, c, payload)
 }
 
+func (c *NotionAIClient) runInferenceTranscriptInBrowserStream(ctx context.Context, payload map[string]any) (io.ReadCloser, error) {
+	return runInferenceTranscriptInBrowserStream(ctx, c, payload)
+}
+
 func (c *NotionAIClient) runInferenceTranscriptWithFallback(ctx context.Context, payload map[string]any, threadID string, sink InferenceStreamSink) (ndjsonParseResult, error) {
 	if c.Config.DebugUpstream {
 		log.Printf("[debug_upstream] runInferenceTranscript http start thread_id=%s", threadID)
@@ -1165,12 +1203,13 @@ func (c *NotionAIClient) runInferenceTranscriptWithFallback(ctx context.Context,
 		return parsed, err
 	}
 
+	runStreamFallback := c.browserRunInferenceStreamFallback
 	runFallback := c.browserRunInferenceFallback
-	if runFallback == nil && !c.supportsBrowserRunInferenceFallback() {
+	if runStreamFallback == nil && runFallback == nil && !c.supportsBrowserRunInferenceFallback() {
 		return parsed, err
 	}
-	if runFallback == nil {
-		runFallback = c.runInferenceTranscriptInBrowser
+	if runStreamFallback == nil && runFallback == nil {
+		runStreamFallback = c.runInferenceTranscriptInBrowserStream
 	}
 	fallbackTimeout := browserFallbackTimeoutForPayload(ctx, payload)
 	payloadBytes := browserFallbackPayloadBytes(payload)
@@ -1182,6 +1221,26 @@ func (c *NotionAIClient) runInferenceTranscriptWithFallback(ctx context.Context,
 	defer fallbackCancel()
 	if c.Config.DebugUpstream {
 		log.Printf("[debug_upstream] runInferenceTranscript browser fallback start thread_id=%s timeout=%s payload_bytes=%d", threadID, fallbackTimeout, payloadBytes)
+	}
+	if runStreamFallback != nil {
+		streamReader, fallbackErr := runStreamFallback(fallbackCtx, payload)
+		if fallbackErr != nil {
+			c.logBestEffortFailure("runInferenceTranscriptInBrowserStream", fallbackErr)
+			c.logRunInferenceTranscriptBrowserFallbackFailure(threadID, fallbackTimeout, payloadBytes, fallbackErr)
+			message := formatRunInferenceTranscriptBrowserFallbackError(err, fallbackErr, fallbackTimeout, payloadBytes)
+			return ndjsonParseResult{}, &inferenceTransportError{Message: message}
+		}
+		if streamReader == nil {
+			formatErr := &inferenceTransportError{Message: "browser fallback returned empty response stream"}
+			c.logRunInferenceTranscriptBrowserFallbackFailure(threadID, fallbackTimeout, payloadBytes, formatErr)
+			return ndjsonParseResult{}, formatErr
+		}
+		defer streamReader.Close()
+		fallbackParsed, fallbackParseErr := consumeNDJSONStreamWithIdleClose(streamReader, threadID, sink, ndjsonIdleAfterAnswerTimeout)
+		if c.Config.DebugUpstream {
+			log.Printf("[debug_upstream] runInferenceTranscript browser fallback stream done thread_id=%s line_count=%d message_ids=%d err=%v", threadID, fallbackParsed.LineCount, len(fallbackParsed.MessageIDs), fallbackParseErr)
+		}
+		return fallbackParsed, fallbackParseErr
 	}
 	body, fallbackErr := runFallback(fallbackCtx, payload)
 	if fallbackErr != nil {
@@ -1963,21 +2022,28 @@ func (s *ndjsonTranscriptState) refreshAgentStepFromPatchState(stepIndex int, si
 		return nil
 	}
 	text, hasText, reasoning, hasReasoning := s.composeStepAgentContent(stepIndex)
-	if !hasText && !hasReasoning {
-		return nil
-	}
 	step := s.Steps[stepIndex]
-	s.Steps[stepIndex] = step
+	prevText := step.Text
+	prevReasoning := step.Reasoning
+
 	if hasReasoning {
 		step.Reasoning = reasoning
-		s.Steps[stepIndex] = step
+	} else {
+		step.Reasoning = ""
+	}
+	if hasText {
+		step.Text = text
+	} else {
+		step.Text = ""
+	}
+	s.Steps[stepIndex] = step
+
+	if hasReasoning || prevReasoning != "" {
 		if err := s.emitFullReasoning(s.composeReasoningText(), sink); err != nil {
 			return err
 		}
 	}
-	if hasText {
-		step.Text = text
-		s.Steps[stepIndex] = step
+	if hasText || prevText != "" {
 		if err := s.emitFullText(step.Text, sink); err != nil {
 			return err
 		}
@@ -2074,6 +2140,33 @@ func (s *ndjsonTranscriptState) removePatchValueEntry(stepIndex int, valueIndex 
 	s.patchValueCounts[statePrefix] = count - 1
 }
 
+func (s *ndjsonTranscriptState) applyPatchStartSnapshot(rawData map[string]any) {
+	if rawData == nil {
+		return
+	}
+	steps := sliceValue(rawData["s"])
+	if len(steps) == 0 {
+		return
+	}
+	if len(s.Steps) > 0 {
+		return
+	}
+	s.Steps = make([]ndjsonStepState, 0, len(steps))
+	for idx, rawStep := range steps {
+		stepMap := mapValue(rawStep)
+		step := ndjsonStepState{
+			ID:   strings.TrimSpace(stringValue(stepMap["id"])),
+			Type: strings.TrimSpace(stringValue(stepMap["type"])),
+		}
+		if step.Type == "agent-inference" {
+			step.Text = extractStepText(stepMap["value"])
+			step.Reasoning = extractStepReasoning(stepMap["value"])
+			s.registerStepValueTypes(idx, stepMap["value"])
+		}
+		s.Steps = append(s.Steps, step)
+	}
+}
+
 func (s *ndjsonTranscriptState) patchEntryType(stepIndex int, rest string) string {
 	entryKey, ok := patchEntryKeyFromRest(stepIndex, rest, "/content")
 	if !ok {
@@ -2088,13 +2181,17 @@ func (s *ndjsonTranscriptState) patchEntryType(stepIndex int, rest string) strin
 
 func (s *ndjsonTranscriptState) composeReasoningText() string {
 	parts := make([]string, 0, len(s.Steps))
+	hasAgentStep := false
 	for _, step := range s.Steps {
+		if step.Type == "agent-inference" {
+			hasAgentStep = true
+		}
 		if strings.TrimSpace(step.Reasoning) == "" {
 			continue
 		}
 		parts = append(parts, sanitizeAssistantVisibleText(step.Reasoning))
 	}
-	if len(parts) > 0 {
+	if hasAgentStep {
 		return strings.Join(parts, "\n\n")
 	}
 	return sanitizeAssistantVisibleText(s.FinalAgent.Reasoning)
@@ -2102,15 +2199,24 @@ func (s *ndjsonTranscriptState) composeReasoningText() string {
 
 func (s *ndjsonTranscriptState) emitFullText(fullText string, sink InferenceStreamSink) error {
 	fullText = sanitizeAssistantVisibleText(fullText)
-	delta := textDeltaSuffix(s.EmittedText, fullText)
+	previous := s.EmittedText
+	delta := textDeltaSuffix(previous, fullText)
+	if previous != "" && fullText != "" && !strings.HasPrefix(fullText, previous) {
+		// Patch rollback/rewrite happened; emit rebuilt full text so downstream stays consistent.
+		s.PatchFallbackCount++
+		delta = fullText
+	}
+	if previous != "" && fullText == "" {
+		// Explicit clear marker for rollback-to-empty.
+		s.PatchFallbackCount++
+		delta = ""
+	}
 	if delta != "" {
 		if err := sink.EmitText(delta); err != nil {
 			return err
 		}
 	}
-	if fullText != "" || s.EmittedText == "" {
-		s.EmittedText = fullText
-	}
+	s.EmittedText = fullText
 	if s.ActiveAgentIndex >= 0 && s.ActiveAgentIndex < len(s.Steps) {
 		step := s.Steps[s.ActiveAgentIndex]
 		if step.ID != "" {
@@ -2123,15 +2229,24 @@ func (s *ndjsonTranscriptState) emitFullText(fullText string, sink InferenceStre
 
 func (s *ndjsonTranscriptState) emitFullReasoning(fullReasoning string, sink InferenceStreamSink) error {
 	fullReasoning = strings.TrimSpace(fullReasoning)
-	delta := textDeltaSuffix(s.EmittedReasoning, fullReasoning)
+	previous := s.EmittedReasoning
+	delta := textDeltaSuffix(previous, fullReasoning)
+	if previous != "" && fullReasoning != "" && !strings.HasPrefix(fullReasoning, previous) {
+		// Patch rollback/rewrite happened; emit rebuilt full reasoning so downstream stays consistent.
+		s.PatchFallbackCount++
+		delta = fullReasoning
+	}
+	if previous != "" && fullReasoning == "" {
+		// Explicit clear marker for rollback-to-empty.
+		s.PatchFallbackCount++
+		delta = ""
+	}
 	if delta != "" {
 		if err := sink.EmitReasoning(delta); err != nil {
 			return err
 		}
 	}
-	if fullReasoning != "" || s.EmittedReasoning == "" {
-		s.EmittedReasoning = fullReasoning
-	}
+	s.EmittedReasoning = fullReasoning
 	s.FinalAgent.Reasoning = fullReasoning
 	return nil
 }
@@ -2416,6 +2531,8 @@ func (s *ndjsonTranscriptState) handleLine(line []byte, threadID string, sink In
 	}
 	s.LineCount++
 	switch streamLine.Type {
+	case "patch-start":
+		s.applyPatchStartSnapshot(streamLine.Data)
 	case "patch":
 		for _, op := range streamLine.V {
 			if err := s.applyPatchOperation(op, sink); err != nil {
@@ -2447,10 +2564,13 @@ func (s *ndjsonTranscriptState) handleLine(line []byte, threadID string, sink In
 
 func (s *ndjsonTranscriptState) result() ndjsonParseResult {
 	out := ndjsonParseResult{
-		LineCount:  s.LineCount,
-		MessageIDs: append([]string(nil), s.MessageIDs...),
-		FinalAgent: s.FinalAgent,
-		Reasoning:  s.composeReasoningText(),
+		LineCount:              s.LineCount,
+		MessageIDs:             append([]string(nil), s.MessageIDs...),
+		FinalAgent:             s.FinalAgent,
+		Reasoning:              s.composeReasoningText(),
+		PatchLineCount:         s.LineCount,
+		ReasoningStreamedChars: len([]rune(strings.TrimSpace(s.EmittedReasoning))),
+		PatchFallbackCount:     s.PatchFallbackCount,
 	}
 	if strings.TrimSpace(out.FinalAgent.Text) == "" {
 		out.FinalAgent.Text = s.EmittedText
@@ -2932,6 +3052,553 @@ func (c *NotionAIClient) listInferenceTranscripts(ctx context.Context) ([]Infere
 		})
 	}
 	return items, nil
+}
+
+func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSummary, error) {
+	body, err := c.postJSON(ctx, c.Config.NotionUpstream().API("getCustomAgents"), map[string]any{
+		"spaceId":        c.Session.SpaceID,
+		"filter":         "all",
+		"includeDeleted": true,
+	}, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		AgentIDs              []string         `json:"agentIds"`
+		MostRecentTranscripts []map[string]any `json:"mostRecentTranscripts"`
+		ActivityScores        map[string]any   `json:"activityScores"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	agentIDs := make([]string, 0, len(out.AgentIDs))
+	seen := map[string]struct{}{}
+	for _, raw := range out.AgentIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		agentIDs = append(agentIDs, id)
+	}
+	latestTranscriptByAgentID := map[string]map[string]any{}
+	for _, item := range out.MostRecentTranscripts {
+		if item == nil {
+			continue
+		}
+		agentID := strings.TrimSpace(stringValue(item["parent_id"]))
+		if agentID == "" {
+			continue
+		}
+		if _, exists := latestTranscriptByAgentID[agentID]; !exists {
+			latestTranscriptByAgentID[agentID] = item
+		}
+	}
+	workflowValueByAgentID := map[string]map[string]any{}
+	if len(agentIDs) > 0 {
+		requests := make([]map[string]any, 0, len(agentIDs))
+		for _, id := range agentIDs {
+			requests = append(requests, map[string]any{
+				"pointer": map[string]any{
+					"table":   "workflow",
+					"id":      id,
+					"spaceId": c.Session.SpaceID,
+				},
+				"version": -1,
+			})
+		}
+		syncBody, syncErr := c.postJSON(ctx, c.Config.NotionUpstream().API("syncRecordValuesSpaceInitial"), map[string]any{
+			"requests": requests,
+		}, "application/json")
+		if syncErr == nil {
+			var syncOut map[string]any
+			if err := json.Unmarshal(syncBody, &syncOut); err == nil {
+				workflowMap := mapValue(mapValue(syncOut["recordMap"])["workflow"])
+				for _, id := range agentIDs {
+					workflowRecord := mapValue(workflowMap[id])
+					workflowValue := mapValue(workflowRecord["value"])
+					if workflowValue != nil {
+						workflowValueByAgentID[id] = workflowValue
+					}
+				}
+			}
+		}
+	}
+	items := make([]CustomAgentSummary, 0, len(agentIDs))
+	for _, id := range agentIDs {
+		workflowValue := workflowValueByAgentID[id]
+		data := mapValue(workflowValue["data"])
+		name := strings.TrimSpace(stringValue(data["name"]))
+		icon := strings.TrimSpace(stringValue(data["icon"]))
+		modelType := strings.TrimSpace(stringValue(mapValue(data["model"])["type"]))
+		alive := true
+		if workflowValue != nil {
+			if rawAlive, exists := workflowValue["alive"]; exists {
+				alive = booleanValue(rawAlive)
+			}
+		}
+		agent := CustomAgentSummary{
+			ID:              id,
+			Name:            name,
+			Icon:            icon,
+			Alive:           alive,
+			Model:           CustomAgentModel{Type: modelType},
+			RawWorkflowData: cloneMapAny(data),
+		}
+		if transcript := latestTranscriptByAgentID[id]; transcript != nil {
+			agent.ThreadID = strings.TrimSpace(stringValue(transcript["id"]))
+			agent.LastTranscript = cloneMapAny(transcript)
+		}
+		if score := strings.TrimSpace(stringValue(out.ActivityScores[id])); score != "" {
+			agent.LastActivityScore = score
+		}
+		items = append(items, agent)
+	}
+	return items, nil
+}
+
+func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentMutationRequest) (CustomAgentSummary, error) {
+	spaceID := strings.TrimSpace(c.Session.SpaceID)
+	userID := strings.TrimSpace(c.Session.UserID)
+	workflowID := randomUUID()
+	instructionPageID := randomUUID()
+	guideBlockID := randomUUID()
+	moduleID := randomUUID()
+	triggerID := randomUUID()
+	textInstanceID := randomUUID()
+	modelType := strings.TrimSpace(req.ModelType)
+	if modelType == "" {
+		modelType = "apricot-sorbet-high"
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "New Agent"
+	}
+	icon := strings.TrimSpace(req.Icon)
+	if icon == "" {
+		icon = "https://www.notion.so/images/customAgentAvatars/puzzle-yellow.png"
+	}
+	createdAtMillis := time.Now().UnixMilli()
+	payload := map[string]any{
+		"requestId": randomUUID(),
+		"transactions": []map[string]any{
+			{
+				"id":      randomUUID(),
+				"spaceId": spaceID,
+				"debug": map[string]any{
+					"userAction": "agentActions.createBlankAgent",
+					"userFlow":   "user_flow_create_page",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "set",
+						"args": map[string]any{
+							"id":                   workflowID,
+							"version":              1,
+							"parent_id":            spaceID,
+							"parent_table":         "space",
+							"space_id":             spaceID,
+							"created_time":         createdAtMillis,
+							"created_by_id":        userID,
+							"created_by_table":     "notion_user",
+							"last_edited_time":     createdAtMillis,
+							"last_edited_by_id":    userID,
+							"last_edited_by_table": "notion_user",
+							"alive":                true,
+							"data": map[string]any{
+								"scripts": []any{},
+								"modules": []map[string]any{
+									{
+										"id":          moduleID,
+										"type":        "notion",
+										"name":        "Notion",
+										"version":     "1.0.0",
+										"permissions": []any{},
+									},
+								},
+								"triggers": []map[string]any{
+									{
+										"id":       triggerID,
+										"moduleId": moduleID,
+										"enabled":  true,
+										"state": map[string]any{
+											"type": "notion.agent.mentioned",
+										},
+									},
+								},
+								"name":  name,
+								"icon":  icon,
+								"model": map[string]any{"type": modelType},
+							},
+							"permissions": []map[string]any{
+								{
+									"type":    "user_permission",
+									"role":    "editor",
+									"user_id": userID,
+								},
+							},
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      instructionPageID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "set",
+						"args": map[string]any{
+							"id":               instructionPageID,
+							"type":             "page",
+							"properties":       map[string]any{"title": []any{}},
+							"space_id":         spaceID,
+							"created_time":     createdAtMillis + 1,
+							"created_by_id":    userID,
+							"created_by_table": "notion_user",
+							"last_edited_time": createdAtMillis + 1,
+							"crdt_data": map[string]any{
+								"title": map[string]any{
+									"r": textInstanceID + ",\"start\",\"end\"",
+									"n": map[string]any{
+										textInstanceID + ",\"start\",\"end\"": map[string]any{
+											"s": map[string]any{
+												"x": textInstanceID,
+												"i": []map[string]any{{"t": "s"}, {"t": "e"}},
+												"l": "",
+											},
+											"c": []any{},
+										},
+									},
+								},
+							},
+							"crdt_format_version": 1,
+						},
+					},
+					{
+						"command": "insertText",
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      instructionPageID,
+							"spaceId": spaceID,
+						},
+						"path":      []string{},
+						"opVersion": 2,
+						"args": map[string]any{
+							"type":           "insertText",
+							"textInstanceId": textInstanceID,
+							"searchLabel":    "",
+							"id":             []any{randomUUID()[:12], 1},
+							"originId":       "start",
+							"content":        "说明",
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      guideBlockID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "set",
+						"args": map[string]any{
+							"id":               guideBlockID,
+							"type":             "text",
+							"properties":       map[string]any{"title": []any{}},
+							"space_id":         spaceID,
+							"created_time":     createdAtMillis + 2,
+							"created_by_id":    userID,
+							"created_by_table": "notion_user",
+							"last_edited_time": createdAtMillis + 2,
+							"crdt_data": map[string]any{
+								"title": map[string]any{
+									"r": randomUUID() + ",\"start\",\"end\"",
+									"n": map[string]any{},
+								},
+							},
+							"crdt_format_version": 1,
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      instructionPageID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{"content"},
+						"command": "insertChildrenAfter",
+						"args": map[string]any{
+							"ids": []string{guideBlockID},
+						},
+						"additionalUpdatedPointers": []map[string]any{
+							{
+								"table":   "block",
+								"id":      instructionPageID,
+								"spaceId": spaceID,
+							},
+							{
+								"table":   "block",
+								"id":      guideBlockID,
+								"spaceId": spaceID,
+							},
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      instructionPageID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "update",
+						"args": map[string]any{
+							"parent_id":    workflowID,
+							"parent_table": "workflow",
+							"alive":        true,
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"command": "set",
+						"path":    []string{"data", "instructions"},
+						"args": map[string]any{
+							"table":   "block",
+							"id":      instructionPageID,
+							"spaceId": spaceID,
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "update",
+						"args": map[string]any{
+							"last_edited_time":     createdAtMillis + 3,
+							"last_edited_by_id":    userID,
+							"last_edited_by_table": "notion_user",
+						},
+					},
+				},
+			},
+			{
+				"id": randomUUID(),
+				"debug": map[string]any{
+					"userAction": "sidebarWorkflowsActions.addSidebarWorkflow",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"table":   "space_view",
+							"spaceId": spaceID,
+						},
+						"path":    []string{"settings"},
+						"command": "update",
+						"args": map[string]any{
+							"sidebar_workflow_ids": []string{workflowID},
+						},
+					},
+				},
+			},
+		},
+	}
+	if _, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json"); err != nil {
+		return CustomAgentSummary{}, err
+	}
+	return CustomAgentSummary{
+		ID:    workflowID,
+		Name:  name,
+		Icon:  icon,
+		Alive: true,
+		Model: CustomAgentModel{Type: modelType},
+	}, nil
+}
+
+func (c *NotionAIClient) updateCustomAgentModel(ctx context.Context, workflowID string, notionModel string) (CustomAgentSummary, error) {
+	workflowID = strings.TrimSpace(workflowID)
+	if workflowID == "" {
+		return CustomAgentSummary{}, fmt.Errorf("workflow id is required")
+	}
+	modelType := strings.TrimSpace(notionModel)
+	if modelType == "" {
+		return CustomAgentSummary{}, fmt.Errorf("model type is required")
+	}
+	spaceID := strings.TrimSpace(c.Session.SpaceID)
+	userID := strings.TrimSpace(c.Session.UserID)
+	nowMillis := time.Now().UnixMilli()
+	payload := map[string]any{
+		"requestId": randomUUID(),
+		"transactions": []map[string]any{
+			{
+				"id":      randomUUID(),
+				"spaceId": spaceID,
+				"debug": map[string]any{
+					"userAction": "WorkflowActions.saveModel",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"command": "set",
+						"path":    []string{"data", "model"},
+						"args": map[string]any{
+							"type": modelType,
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "update",
+						"args": map[string]any{
+							"last_edited_time":     nowMillis,
+							"last_edited_by_id":    userID,
+							"last_edited_by_table": "notion_user",
+						},
+					},
+				},
+			},
+			{
+				"id": randomUUID(),
+				"debug": map[string]any{
+					"userAction": "sidebarWorkflowsActions.removeSidebarWorkflow",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"table":   "space_view",
+							"spaceId": spaceID,
+						},
+						"path":    []string{"settings"},
+						"command": "update",
+						"args": map[string]any{
+							"sidebar_workflow_ids": []string{},
+						},
+					},
+				},
+			},
+			{
+				"id": randomUUID(),
+				"debug": map[string]any{
+					"userAction": "sidebarWorkflowsActions.removeSidebarWorkflow",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"table":   "space_view",
+							"spaceId": spaceID,
+						},
+						"path":    []string{"settings"},
+						"command": "update",
+						"args": map[string]any{
+							"sidebar_workflow_ids": []string{},
+						},
+					},
+				},
+			},
+		},
+	}
+	if _, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json"); err != nil {
+		return CustomAgentSummary{}, err
+	}
+	return CustomAgentSummary{
+		ID:    workflowID,
+		Alive: true,
+		Model: CustomAgentModel{Type: modelType},
+	}, nil
+}
+
+func (c *NotionAIClient) softDeleteCustomAgent(ctx context.Context, workflowID string) error {
+	workflowID = strings.TrimSpace(workflowID)
+	if workflowID == "" {
+		return fmt.Errorf("workflow id is required")
+	}
+	spaceID := strings.TrimSpace(c.Session.SpaceID)
+	userID := strings.TrimSpace(c.Session.UserID)
+	nowMillis := time.Now().UnixMilli()
+	payload := map[string]any{
+		"requestId": randomUUID(),
+		"transactions": []map[string]any{
+			{
+				"id":      randomUUID(),
+				"spaceId": spaceID,
+				"debug": map[string]any{
+					"userAction": "workflowActions.softDeleteWorkflow",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"command": "set",
+						"path":    []string{"alive"},
+						"args":    false,
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "workflow",
+							"id":      workflowID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "update",
+						"args": map[string]any{
+							"last_edited_time":     nowMillis,
+							"last_edited_by_id":    userID,
+							"last_edited_by_table": "notion_user",
+						},
+					},
+				},
+			},
+			{
+				"id": randomUUID(),
+				"debug": map[string]any{
+					"userAction": "sidebarWorkflowsActions.removeSidebarWorkflow",
+				},
+				"operations": []map[string]any{
+					{
+						"pointer": map[string]any{
+							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"table":   "space_view",
+							"spaceId": spaceID,
+						},
+						"path":    []string{"settings"},
+						"command": "update",
+						"args": map[string]any{
+							"sidebar_workflow_ids": []string{},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json")
+	return err
 }
 
 func (c *NotionAIClient) deleteThread(ctx context.Context, threadID string) error {
@@ -4014,21 +4681,24 @@ func (c *NotionAIClient) RunPrompt(ctx context.Context, req PromptRunRequest) (I
 		c.markInferenceTranscriptSeenBestEffort(ctx, actualThreadID)
 	}
 	return InferenceResult{
-		Prompt:           cleanPrompt,
-		Model:            strings.TrimSpace(req.PublicModel),
-		NotionModel:      strings.TrimSpace(req.NotionModel),
-		ThreadID:         actualThreadID,
-		TraceID:          traceID,
-		Text:             finalAgent.Text,
-		Reasoning:        firstNonEmpty(finalAgent.Reasoning, parsed.Reasoning),
-		MessageID:        finalAgent.MessageID,
-		CompletedTime:    finalAgent.CompletedTime,
-		NDJSONLineCount:  lineCount,
-		RawMessageIDs:    messageIDs,
-		Attachments:      uploadedAttachments,
-		ConfigID:         meta.ConfigID,
-		ContextID:        meta.ContextID,
-		OriginalDatetime: meta.OriginalDatetime,
+		Prompt:                 cleanPrompt,
+		Model:                  strings.TrimSpace(req.PublicModel),
+		NotionModel:            strings.TrimSpace(req.NotionModel),
+		ThreadID:               actualThreadID,
+		TraceID:                traceID,
+		Text:                   finalAgent.Text,
+		Reasoning:              firstNonEmpty(finalAgent.Reasoning, parsed.Reasoning),
+		MessageID:              finalAgent.MessageID,
+		CompletedTime:          finalAgent.CompletedTime,
+		NDJSONLineCount:        lineCount,
+		UpstreamPatchLineCount: parsed.PatchLineCount,
+		ReasoningStreamedChars: parsed.ReasoningStreamedChars,
+		PatchFallbackCount:     parsed.PatchFallbackCount,
+		RawMessageIDs:          messageIDs,
+		Attachments:            uploadedAttachments,
+		ConfigID:               meta.ConfigID,
+		ContextID:              meta.ContextID,
+		OriginalDatetime:       meta.OriginalDatetime,
 	}, nil
 }
 
@@ -4072,20 +4742,23 @@ func (c *NotionAIClient) RunPromptStreamWithSink(ctx context.Context, req Prompt
 		c.markInferenceTranscriptSeenBestEffort(ctx, actualThreadID)
 	}
 	return InferenceResult{
-		Prompt:           cleanPrompt,
-		Model:            strings.TrimSpace(req.PublicModel),
-		NotionModel:      strings.TrimSpace(req.NotionModel),
-		ThreadID:         actualThreadID,
-		TraceID:          traceID,
-		Text:             finalAgent.Text,
-		Reasoning:        firstNonEmpty(finalAgent.Reasoning, parsed.Reasoning),
-		MessageID:        finalAgent.MessageID,
-		CompletedTime:    finalAgent.CompletedTime,
-		NDJSONLineCount:  parsed.LineCount,
-		RawMessageIDs:    messageIDs,
-		Attachments:      uploadedAttachments,
-		ConfigID:         meta.ConfigID,
-		ContextID:        meta.ContextID,
-		OriginalDatetime: meta.OriginalDatetime,
+		Prompt:                 cleanPrompt,
+		Model:                  strings.TrimSpace(req.PublicModel),
+		NotionModel:            strings.TrimSpace(req.NotionModel),
+		ThreadID:               actualThreadID,
+		TraceID:                traceID,
+		Text:                   finalAgent.Text,
+		Reasoning:              firstNonEmpty(finalAgent.Reasoning, parsed.Reasoning),
+		MessageID:              finalAgent.MessageID,
+		CompletedTime:          finalAgent.CompletedTime,
+		NDJSONLineCount:        parsed.LineCount,
+		UpstreamPatchLineCount: parsed.PatchLineCount,
+		ReasoningStreamedChars: parsed.ReasoningStreamedChars,
+		PatchFallbackCount:     parsed.PatchFallbackCount,
+		RawMessageIDs:          messageIDs,
+		Attachments:            uploadedAttachments,
+		ConfigID:               meta.ConfigID,
+		ContextID:              meta.ContextID,
+		OriginalDatetime:       meta.OriginalDatetime,
 	}, nil
 }

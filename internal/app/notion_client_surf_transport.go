@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +16,22 @@ import (
 	"github.com/enetx/g"
 	"github.com/enetx/surf"
 )
+
+type bufferedReadCloser struct {
+	reader io.Reader
+	closer io.Closer
+}
+
+func (b *bufferedReadCloser) Read(p []byte) (int, error) {
+	return b.reader.Read(p)
+}
+
+func (b *bufferedReadCloser) Close() error {
+	if b.closer == nil {
+		return nil
+	}
+	return b.closer.Close()
+}
 
 func newSurfStdClient(proxy string) (*http.Client, error) {
 	builder := surf.NewClient().Builder().Session().Impersonate().Chrome()
@@ -147,16 +165,33 @@ func runLoginHelperRequestWithSurf(ctx context.Context, request loginTransportRe
 }
 
 func runInferenceTranscriptInBrowserWithSurf(ctx context.Context, client *NotionAIClient, payload map[string]any) (string, error) {
+	stream, err := runInferenceTranscriptInBrowserStreamWithSurf(ctx, client, payload)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+	respBody, err := io.ReadAll(stream)
+	if err != nil {
+		return "", err
+	}
+	text := string(respBody)
+	if err := detectInferenceStreamResponseFormat(text); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+func runInferenceTranscriptInBrowserStreamWithSurf(ctx context.Context, client *NotionAIClient, payload map[string]any) (io.ReadCloser, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	request, err := buildBrowserTransportRequest(client, payload)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	stdClient, err := newSurfStdClient(request.Proxy)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	timeout := time.Duration(request.RequestTimeoutMS) * time.Millisecond
@@ -167,17 +202,17 @@ func runInferenceTranscriptInBrowserWithSurf(ctx context.Context, client *Notion
 
 	parsedRunURL, err := url.Parse(request.RunURL)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	loadProbeCookiesIntoJar(stdClient.Jar, parsedRunURL, request.Cookies)
 
 	requestBody, err := json.Marshal(request.Payload)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, parsedRunURL.String(), bytes.NewReader(requestBody))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	for k, v := range request.Headers {
 		if strings.EqualFold(strings.TrimSpace(k), "cookie") {
@@ -188,20 +223,30 @@ func runInferenceTranscriptInBrowserWithSurf(ctx context.Context, client *Notion
 
 	resp, err := stdClient.Do(httpReq)
 	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("browser fallback returned non-success status=%d content_type=%q", resp.StatusCode, resp.Header.Get("Content-Type"))
+		defer resp.Body.Close()
+		return nil, fmt.Errorf("browser fallback returned non-success status=%d content_type=%q", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
-	text := string(respBody)
-	if err := detectInferenceStreamResponseFormat(text); err != nil {
-		return "", err
+	buffered := bufio.NewReader(resp.Body)
+	if formatErr := detectInferenceStreamResponseFormatFromBufferedReader(buffered); formatErr != nil {
+		_ = resp.Body.Close()
+		return nil, formatErr
 	}
-	return text, nil
+	return &bufferedReadCloser{reader: buffered, closer: resp.Body}, nil
+}
+
+func detectInferenceStreamResponseFormatFromBufferedReader(reader *bufio.Reader) error {
+	if reader == nil {
+		return &inferenceTransportError{Message: "browser fallback returned empty response stream"}
+	}
+	preview, err := reader.Peek(2048)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
+		return err
+	}
+	if len(preview) == 0 {
+		return &inferenceTransportError{Message: "browser fallback returned empty response"}
+	}
+	return detectInferenceStreamResponseFormat(string(preview))
 }

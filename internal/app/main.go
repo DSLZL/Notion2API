@@ -1676,10 +1676,31 @@ func chatCompletionInitialFlushDelayForRequest(request PromptRunRequest) time.Du
 	return chatCompletionInitialFlushDelay
 }
 
+func resolveReasoningPreference(showThoughts *bool, stream bool, features FeatureConfig) (suppressReasoning bool, streamWarmup bool) {
+	expose := features.ReasoningExposeDefault
+	if showThoughts != nil {
+		expose = *showThoughts
+	}
+	streamReasoning := features.ReasoningStreamDefault
+	if showThoughts != nil {
+		streamReasoning = *showThoughts
+	}
+	if !stream {
+		streamReasoning = false
+	}
+	if !expose {
+		streamReasoning = false
+	}
+	return !expose, streamReasoning
+}
+
 func applyInferenceResultOutputPolicy(result InferenceResult, request PromptRunRequest) InferenceResult {
 	result.Text = sanitizeAssistantVisibleText(result.Text)
 	result.Reasoning = sanitizeAssistantVisibleText(result.Reasoning)
 	if request.SuppressReasoningOutput {
+		if result.Reasoning != "" {
+			result.ReasoningSuppressed = true
+		}
 		result.Reasoning = ""
 	}
 	return result
@@ -1765,6 +1786,7 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		reqCtx.entry,
 		requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, reqCtx.cfg.Features.UseWebSearch),
 	)
+	request.SuppressReasoningOutput, request.StreamReasoningWarmup = resolveReasoningPreference(typed.ShowThoughts, typed.Stream, reqCtx.cfg.Features)
 	freshThreadMode := forceFreshThreadPerRequest(reqCtx.cfg)
 	conversation := ConversationEntry{}
 	if matched, ok := a.resolveContinuationConversationWithExplicit("", hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
@@ -1963,6 +1985,7 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		reqCtx.entry,
 		requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, reqCtx.cfg.Features.UseWebSearch),
 	)
+	request.SuppressReasoningOutput, request.StreamReasoningWarmup = resolveReasoningPreference(typed.ShowThoughts, typed.Stream, reqCtx.cfg.Features)
 	freshThreadMode := forceFreshThreadPerRequest(reqCtx.cfg)
 	conversation := ConversationEntry{}
 	if matched, ok := a.resolveContinuationConversationWithExplicit(previousResponseID, hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {

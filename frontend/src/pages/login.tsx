@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Alert } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useI18n } from '@/lib/i18n'
 
 export function LoginPage() {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const verify = useVerify()
   const login = useLogin()
   const [password, setPassword] = useState('')
@@ -39,13 +41,13 @@ export function LoginPage() {
       <div className="flex min-h-screen items-center justify-center bg-canvas-soft">
         <div className="w-full max-w-sm rounded-[var(--radius-card)] border border-hairline bg-canvas p-8 shadow-[var(--shadow-2)]">
           <div className="mb-6 flex justify-center">
-            <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
+          <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
               <span className="text-lg font-bold text-on-primary">N</span>
             </div>
           </div>
-          <h1 className="text-center text-lg font-semibold text-ink">Setup Required</h1>
+          <h1 className="text-center text-lg font-semibold text-ink">{t('login.setupRequiredTitle')}</h1>
           <p className="mt-2 text-center text-sm text-ink-mute">
-            Please set an admin password via environment variable or config file before using the admin panel.
+            {t('login.setupRequiredDesc')}
           </p>
         </div>
       </div>
@@ -58,10 +60,10 @@ export function LoginPage() {
       <div className="flex min-h-screen items-center justify-center bg-canvas-soft">
         <div className="w-full max-w-sm rounded-[var(--radius-card)] border border-hairline bg-canvas p-8 shadow-[var(--shadow-2)]">
           <Alert variant="error">
-            Cannot connect to the server. Please check that the backend is running.
+            {t('login.serverUnavailable')}
           </Alert>
           <Button variant="secondary" className="mt-4 w-full" onClick={() => verify.refetch()}>
-            Retry
+            {t('common.retry')}
           </Button>
         </div>
       </div>
@@ -76,10 +78,10 @@ export function LoginPage() {
       if (res.success) {
         navigate('/', { replace: true })
       } else {
-        setError(res.message || 'Login failed')
+        setError(res.message || t('login.loginFailed'))
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : t('login.loginFailed'))
     }
   }
 
@@ -92,20 +94,20 @@ export function LoginPage() {
             <span className="text-lg font-bold text-on-primary">N</span>
           </div>
         </div>
-        <h1 className="text-center text-lg font-semibold text-ink">Notion2API Admin</h1>
-        <p className="mt-1 text-center text-sm text-ink-mute">Sign in to continue</p>
+        <h1 className="text-center text-lg font-semibold text-ink">{t('login.adminTitle')}</h1>
+        <p className="mt-1 text-center text-sm text-ink-mute">{t('login.signInContinue')}</p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           {error && <Alert variant="error">{error}</Alert>}
           <Input
             type="password"
-            placeholder="Admin password"
+            placeholder={t('login.passwordPlaceholder')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoFocus
           />
           <Button type="submit" className="w-full" loading={login.isPending}>
-            Sign In
+            {t('login.signIn')}
           </Button>
         </form>
       </div>

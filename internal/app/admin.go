@@ -796,6 +796,8 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
 	}
+	stream := boolValue(payload["stream"])
+	showThoughts := parseOptionalBoolField(payload["show_thoughts"])
 	preferredConversationID := requestedConversationID(r, payload)
 	request := PromptRunRequest{
 		Prompt:                            prompt,
@@ -806,6 +808,7 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 		Attachments:                       attachments,
 		SuppressUpstreamThreadPersistence: strings.TrimSpace(preferredConversationID) == "",
 	}
+	request.SuppressReasoningOutput, request.StreamReasoningWarmup = resolveReasoningPreference(showThoughts, stream, cfg.Features)
 	freshThreadMode := forceFreshThreadPerRequest(cfg)
 	request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 	if request.PinnedAccountEmail == "" && requestedAdminDispatchMode(payload) == "active" {
@@ -831,6 +834,10 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 	conversationID := a.startConversationTurn(conversation.ID, preferredConversationID, "admin_tester", "admin_test", prompt, request)
 	timedRequest, cancel := cloneRequestWithTimeout(r, adminSyncRequestTimeout(cfg))
 	defer cancel()
+	if stream {
+		a.handleAdminTestStream(w, timedRequest, request, conversationID, entry.ID)
+		return
+	}
 	result, err := a.runPrompt(timedRequest, request)
 	if err != nil {
 		a.failConversation(conversationID, err)
@@ -845,6 +852,91 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 		"result":          buildChatCompletion(result, entry.ID, true),
 		"text":            sanitizeAssistantVisibleText(result.Text),
 	})
+}
+
+func (a *App) handleAdminTestStream(w http.ResponseWriter, r *http.Request, request PromptRunRequest, conversationID string, publicModel string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "streaming is not supported by this response writer"})
+		return
+	}
+	applyCORSHeaders(w)
+	w.Header().Set("X-Notion2API", "1")
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	sequence := 0
+	writeEvent := func(eventType string, payload map[string]any) error {
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		payload["sequence_number"] = sequence
+		sequence++
+		return writeSSEEvent(w, flusher, eventType, payload)
+	}
+
+	if err := writeEvent("admin_test.start", map[string]any{
+		"conversation_id": conversationID,
+		"model":           publicModel,
+	}); err != nil {
+		return
+	}
+
+	result, err := a.runPromptStreamWithSink(r, request, InferenceStreamSink{
+		Text: func(delta string) error {
+			if strings.TrimSpace(delta) == "" {
+				return nil
+			}
+			a.pushConversationDelta(conversationID, delta)
+			return writeEvent("admin_test.text.delta", map[string]any{"delta": delta})
+		},
+		Reasoning: func(delta string) error {
+			if strings.TrimSpace(delta) == "" || request.SuppressReasoningOutput {
+				return nil
+			}
+			return writeEvent("admin_test.reasoning.delta", map[string]any{"delta": delta})
+		},
+		ReasoningWarmup: func() error {
+			if request.SuppressReasoningOutput || !request.StreamReasoningWarmup {
+				return nil
+			}
+			return writeEvent("admin_test.reasoning.warmup", map[string]any{"delta": "\u200b"})
+		},
+		KeepAlive: func() error {
+			return writeSSEComment(w, flusher, "admin-test-keepalive")
+		},
+	})
+	if err != nil {
+		a.failConversation(conversationID, err)
+		_ = writeEvent("admin_test.error", map[string]any{
+			"detail": err.Error(),
+		})
+		writeSSEDone(w, flusher)
+		return
+	}
+
+	result = applyInferenceResultOutputPolicy(result, request)
+	a.completeConversation(conversationID, result)
+	a.persistConversationSession(conversationID, request, result)
+	_ = writeEvent("admin_test.completed", map[string]any{
+		"conversation_id": conversationID,
+		"text":            sanitizeAssistantVisibleText(result.Text),
+		"reasoning":       sanitizeAssistantVisibleText(result.Reasoning),
+		"result":          buildChatCompletion(result, publicModel, true),
+	})
+	writeSSEDone(w, flusher)
+}
+
+func parseOptionalBoolField(raw any) *bool {
+	value, ok := parseBoolField(raw)
+	if !ok {
+		return nil
+	}
+	copyValue := value
+	return &copyValue
 }
 
 func (a *App) serveAdminStatic(w http.ResponseWriter, r *http.Request) {
@@ -913,6 +1005,10 @@ func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		a.handleAdminConversationBatchDelete(w, r)
 	case strings.HasPrefix(r.URL.Path, "/admin/conversations/"):
 		a.handleAdminConversationByID(w, r)
+	case r.URL.Path == "/admin/agents":
+		a.handleAdminAgents(w, r)
+	case strings.HasPrefix(r.URL.Path, "/admin/agents/"):
+		a.handleAdminAgentByID(w, r)
 	case r.URL.Path == "/admin/accounts":
 		a.handleAdminAccounts(w, r)
 	case r.URL.Path == "/admin/accounts/batch-update":

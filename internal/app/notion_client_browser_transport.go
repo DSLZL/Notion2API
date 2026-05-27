@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -54,6 +55,16 @@ func runInferenceTranscriptInBrowser(ctx context.Context, client *NotionAIClient
 		return "", fmt.Errorf("browser transport requires session cookies")
 	}
 	return runInferenceTranscriptInBrowserWithSurf(ctx, client, payload)
+}
+
+func runInferenceTranscriptInBrowserStream(ctx context.Context, client *NotionAIClient, payload map[string]any) (io.ReadCloser, error) {
+	if client == nil {
+		return nil, fmt.Errorf("browser transport client is nil")
+	}
+	if len(client.Session.Cookies) == 0 {
+		return nil, fmt.Errorf("browser transport requires session cookies")
+	}
+	return runInferenceTranscriptInBrowserStreamWithSurf(ctx, client, payload)
 }
 
 func buildBrowserTransportRequest(client *NotionAIClient, payload map[string]any) (browserTransportRequest, error) {

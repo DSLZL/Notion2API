@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Users,
   Box,
+  Bot,
   FlaskConical,
   MessageSquare,
   Settings,
@@ -13,21 +14,24 @@ import {
   LogOut,
 } from 'lucide-react'
 import { useLogout } from '@/lib/hooks/use-auth'
-
-const navItems = [
-  { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { label: 'Accounts', path: '/accounts', icon: Users },
-  { label: 'Models', path: '/models', icon: Box },
-  { label: 'Tester', path: '/tester', icon: FlaskConical },
-  { label: 'Conversations', path: '/conversations', icon: MessageSquare },
-  { label: 'Settings', path: '/settings', icon: Settings },
-] as const
+import { useI18n } from '@/lib/i18n'
 
 export function Sidebar() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const logout = useLogout()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { t } = useI18n()
+
+  const navItems = [
+    { label: t('nav.dashboard'), path: '/', icon: LayoutDashboard },
+    { label: t('nav.accounts'), path: '/accounts', icon: Users },
+    { label: t('nav.models'), path: '/models', icon: Box },
+    { label: t('nav.agents'), path: '/agents', icon: Bot },
+    { label: t('nav.tester'), path: '/tester', icon: FlaskConical },
+    { label: t('nav.conversations'), path: '/conversations', icon: MessageSquare },
+    { label: t('nav.settings'), path: '/settings', icon: Settings },
+  ] as const
 
   const isActive = (path: string) => {
     if (path === '/') return pathname === '/'
@@ -70,7 +74,7 @@ export function Sidebar() {
           className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-ink-mute hover:bg-canvas-soft hover:text-ink transition-colors"
         >
           <LogOut className="h-4 w-4" />
-          Logout
+          {t('nav.logout')}
         </button>
       </div>
     </div>
