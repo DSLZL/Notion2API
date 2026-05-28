@@ -2351,8 +2351,11 @@ func TestServeIndexIncludesCORSHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("unexpected status: got %d want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("unexpected status: got %d want %d", rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != "/admin" {
+		t.Fatalf("unexpected Location header: got %q want %q", got, "/admin")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != corsAllowOrigin {
 		t.Fatalf("unexpected Access-Control-Allow-Origin: got %q want %q", got, corsAllowOrigin)

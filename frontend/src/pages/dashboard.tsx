@@ -7,6 +7,7 @@ import { StatusDot } from '@/components/shared/status-dot'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/shared/error-state'
+import { AdminWelcomeHero } from '@/components/dashboard/admin-welcome-hero'
 import { formatUptime, formatNumber, formatRelativeTime } from '@/lib/format'
 import { useI18n } from '@/lib/i18n'
 import { Users, Box, Activity, Clock, Shield, Wifi } from 'lucide-react'
@@ -50,6 +51,8 @@ export function DashboardPage() {
     <>
       <Topbar title={t('dashboard.topbar')} />
       <div className="p-6 space-y-6">
+        <AdminWelcomeHero />
+
         {/* Runtime Health */}
         <Section title={t('dashboard.runtimeHealth')}>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
