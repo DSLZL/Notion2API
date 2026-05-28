@@ -33,7 +33,7 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
     let message = res.statusText
     try {
       const err = await res.json()
-      message = err.message || err.error || message
+      message = err.detail || err.message || err.error || message
     } catch {
       // ignore
     }

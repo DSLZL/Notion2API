@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"expvar"
@@ -33,6 +34,8 @@ const (
 	browserFallbackTimeoutStep            = 5 * time.Second
 	browserFallbackTimeoutStepBytes       = 4 * 1024
 	browserFallbackTimeoutThreshold       = 12 * 1024
+	syncRecordValuesRetryDelay            = 250 * time.Millisecond
+	saveTransactionsRetryDelay            = 350 * time.Millisecond
 	bestEffortBudgetDivisor         int64 = 4
 )
 
@@ -452,6 +455,8 @@ type ndjsonStreamLine struct {
 type ndjsonAgentInferenceValue struct {
 	Type      string `json:"type"`
 	Content   string `json:"content"`
+	Text      string `json:"text,omitempty"`
+	Value     string `json:"value,omitempty"`
 	Signature string `json:"signature,omitempty"`
 }
 
@@ -834,6 +839,15 @@ func (c *NotionAIClient) chatReferer(threadID string) string {
 	return base + "/chat?t=" + clean + "&wfv=chat"
 }
 
+func (c *NotionAIClient) agentLibraryReferer() string {
+	base := strings.TrimRight(c.Config.NotionUpstream().OriginURL, "/")
+	spaceID := strings.ReplaceAll(strings.TrimSpace(c.Session.SpaceID), "-", "")
+	if spaceID == "" {
+		return c.Config.NotionUpstream().AIURL()
+	}
+	return base + "/library/agents?spaceId=" + spaceID
+}
+
 func (c *NotionAIClient) requestThreadID(payload map[string]any) string {
 	if payload == nil {
 		return ""
@@ -882,6 +896,16 @@ func (c *NotionAIClient) requestReferer(url string, payload map[string]any) stri
 		}
 		return c.chatReferer(c.requestThreadID(payload))
 	case strings.Contains(endpoint, "saveTransactionsFanout"):
+		if transactions := sliceValue(payload["transactions"]); len(transactions) > 0 {
+			for _, rawTxn := range transactions {
+				txn := mapValue(rawTxn)
+				debug := mapValue(txn["debug"])
+				action := strings.TrimSpace(stringValue(debug["userAction"]))
+				if strings.HasPrefix(action, "agentActions.") || strings.HasPrefix(action, "sidebarWorkflowsActions.") || strings.HasPrefix(action, "workflowActions.") || strings.HasPrefix(action, "WorkflowActions.") {
+					return c.agentLibraryReferer()
+				}
+			}
+		}
 		return c.chatReferer(c.requestThreadID(payload))
 	case strings.Contains(endpoint, "syncRecordValuesSpaceInitial"):
 		return c.chatReferer(c.requestThreadID(payload))
@@ -929,6 +953,53 @@ func randomUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }
 
+func randomTokenURLSafe(length int) string {
+	if length <= 0 {
+		return ""
+	}
+	buf := make([]byte, length)
+	if _, err := rand.Read(buf); err != nil {
+		panic(err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+	if len(token) >= length {
+		return token[:length]
+	}
+	return token
+}
+
+func randomHexString(length int) string {
+	if length <= 0 {
+		return ""
+	}
+	const hex = "0123456789abcdef"
+	buf := make([]byte, length)
+	raw := make([]byte, length)
+	if _, err := rand.Read(raw); err != nil {
+		panic(err)
+	}
+	for i := 0; i < length; i++ {
+		buf[i] = hex[int(raw[i])%len(hex)]
+	}
+	return string(buf)
+}
+
+func randomHexUUIDSection(length int) string {
+	return randomHexString(length)
+}
+
+func randomNotionSpaceScopedID(spaceID string) string {
+	base, ok := canonicalUUIDString(spaceID)
+	if !ok {
+		return randomUUID()
+	}
+	parts := strings.Split(base, "-")
+	if len(parts) != 5 {
+		return randomUUID()
+	}
+	return fmt.Sprintf("%s-%s-80%s-%s-%s", parts[0], parts[1], randomHexUUIDSection(2), randomHexUUIDSection(4), randomHexUUIDSection(12))
+}
+
 func canonicalUUIDString(value string) (string, bool) {
 	clean := strings.ToLower(strings.TrimSpace(value))
 	if len(clean) != 36 {
@@ -973,7 +1044,7 @@ func extractStepText(value any) string {
 		textParts := make([]string, 0, len(parts))
 		for _, raw := range parts {
 			item := mapValue(raw)
-			partType := strings.ToLower(strings.TrimSpace(stringValue(item["type"])))
+			partType := normalizePatchEntryType(stringValue(item["type"]))
 			if partType != "text" {
 				continue
 			}
@@ -994,7 +1065,7 @@ func extractStepText(value any) string {
 			textParts := make([]string, 0, len(parts))
 			for _, raw := range parts {
 				item := mapValue(raw)
-				partType := strings.ToLower(strings.TrimSpace(stringValue(item["type"])))
+				partType := normalizePatchEntryType(stringValue(item["type"]))
 				if partType != "text" {
 					continue
 				}
@@ -1066,7 +1137,11 @@ func (c *NotionAIClient) postJSON(ctx context.Context, url string, payload map[s
 }
 
 func (c *NotionAIClient) postJSONWithReferer(ctx context.Context, url string, payload map[string]any, contentType string, referer string) ([]byte, error) {
-	resp, err := c.postJSONResponseWithReferer(ctx, url, payload, contentType, referer)
+	return c.postJSONWithRefererAndHeaders(ctx, url, payload, contentType, referer, nil)
+}
+
+func (c *NotionAIClient) postJSONWithRefererAndHeaders(ctx context.Context, url string, payload map[string]any, contentType string, referer string, extraHeaders map[string]string) ([]byte, error) {
+	resp, err := c.postJSONResponseWithRefererAndHeaders(ctx, url, payload, contentType, referer, extraHeaders)
 	if err != nil {
 		return nil, err
 	}
@@ -1083,6 +1158,10 @@ func (c *NotionAIClient) postJSONResponse(ctx context.Context, url string, paylo
 }
 
 func (c *NotionAIClient) postJSONResponseWithReferer(ctx context.Context, url string, payload map[string]any, contentType string, refererOverride string) (*http.Response, error) {
+	return c.postJSONResponseWithRefererAndHeaders(ctx, url, payload, contentType, refererOverride, nil)
+}
+
+func (c *NotionAIClient) postJSONResponseWithRefererAndHeaders(ctx context.Context, url string, payload map[string]any, contentType string, refererOverride string, extraHeaders map[string]string) (*http.Response, error) {
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/json"
 	}
@@ -1104,6 +1183,12 @@ func (c *NotionAIClient) postJSONResponseWithReferer(ctx context.Context, url st
 	}
 	headers := c.baseHeaders(accept, referer)
 	for key, value := range headers {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	for key, value := range extraHeaders {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
@@ -1150,6 +1235,164 @@ func isTrustRuleDeniedInferenceError(err error) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(stepErr.SubType), "trust-rule-denied")
+}
+
+func isSyncRecordValuesRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var apiErr *notionAPIError
+	if errors.As(err, &apiErr) {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+	if strings.Contains(msg, " eof") || strings.HasSuffix(msg, "eof") {
+		return true
+	}
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "connection aborted") || strings.Contains(msg, "was aborted") {
+		return true
+	}
+	if strings.Contains(msg, "stream error") || strings.Contains(msg, "tls handshake timeout") {
+		return true
+	}
+	if strings.Contains(msg, "timeout") {
+		return true
+	}
+	return false
+}
+
+func isSaveTransactionsRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var apiErr *notionAPIError
+	if errors.As(err, &apiErr) {
+		msg := strings.ToLower(strings.TrimSpace(apiErr.Message))
+		if apiErr.StatusCode >= 500 && strings.Contains(msg, "unsaved transactions: no previtems available") {
+			return true
+		}
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+	if strings.Contains(msg, "unsaved transactions: no previtems available") {
+		return true
+	}
+	if strings.Contains(msg, " eof") || strings.HasSuffix(msg, "eof") {
+		return true
+	}
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "connection aborted") || strings.Contains(msg, "was aborted") {
+		return true
+	}
+	if strings.Contains(msg, "timeout") || strings.Contains(msg, "stream error") {
+		return true
+	}
+	return false
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	if ctx == nil {
+		time.Sleep(d)
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (c *NotionAIClient) postJSONWithRefererRetrySyncRecordValues(ctx context.Context, payload map[string]any, referer string) ([]byte, error) {
+	url := c.Config.NotionUpstream().API("syncRecordValuesSpaceInitial")
+	body, err := c.postJSONWithReferer(ctx, url, payload, "application/json", referer)
+	if err == nil || !isSyncRecordValuesRetryableError(err) {
+		return body, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if waitErr := sleepWithContext(ctx, syncRecordValuesRetryDelay); waitErr != nil {
+		return nil, err
+	}
+	return c.postJSONWithReferer(ctx, url, payload, "application/json", referer)
+}
+
+func (c *NotionAIClient) postSaveTransactionsFanoutWithRetry(ctx context.Context, payload map[string]any) error {
+	url := c.Config.NotionUpstream().API("saveTransactionsFanout")
+	_, err := c.postJSON(ctx, url, payload, "application/json")
+	if err == nil || !isSaveTransactionsRetryableError(err) {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if waitErr := sleepWithContext(ctx, saveTransactionsRetryDelay); waitErr != nil {
+		return err
+	}
+	retryPayload := refreshSaveTransactionsRetryPayloadIDs(payload)
+	_, retryErr := c.postJSON(ctx, url, retryPayload, "application/json")
+	return retryErr
+}
+
+func refreshSaveTransactionsRetryPayloadIDs(payload map[string]any) map[string]any {
+	cloned := deepCloneAny(payload)
+	body, ok := cloned.(map[string]any)
+	if !ok || body == nil {
+		return map[string]any{
+			"requestId": randomUUID(),
+		}
+	}
+	body["requestId"] = randomUUID()
+	rawTxns := sliceValue(body["transactions"])
+	if len(rawTxns) == 0 {
+		return body
+	}
+	for i := range rawTxns {
+		txn := mapValue(rawTxns[i])
+		if len(txn) == 0 {
+			continue
+		}
+		txn["id"] = randomUUID()
+		rawTxns[i] = txn
+	}
+	body["transactions"] = rawTxns
+	return body
+}
+
+func deepCloneAny(v any) any {
+	switch src := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(src))
+		for key, value := range src {
+			out[key] = deepCloneAny(value)
+		}
+		return out
+	case []any:
+		out := make([]any, len(src))
+		for i, value := range src {
+			out[i] = deepCloneAny(value)
+		}
+		return out
+	default:
+		return src
+	}
 }
 
 func (c *NotionAIClient) runInferenceTranscriptHTTP(ctx context.Context, payload map[string]any, threadID string, sink InferenceStreamSink) (ndjsonParseResult, error) {
@@ -1932,7 +2175,7 @@ func patchStateEntryKey(statePrefix string, valueIndex int) string {
 
 func normalizePatchEntryType(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "text":
+	case "text", "output_text", "outputtext", "final":
 		return "text"
 	case "thinking", "reasoning":
 		return "reasoning"
@@ -2063,8 +2306,9 @@ func (s *ndjsonTranscriptState) mergeEventValueIntoPatchState(stepIndex int, val
 	}
 	entryKey := patchStateEntryKey(statePrefix, valueIndex)
 	s.patchValueTypes[entryKey] = entryType
-	if strings.TrimSpace(value.Content) != "" {
-		s.patchValueText[entryKey] = mergeCumulativeAgentContent(s.patchValueText[entryKey], value.Content)
+	content := strings.TrimSpace(firstNonEmpty(value.Content, value.Text, value.Value))
+	if content != "" {
+		s.patchValueText[entryKey] = mergeCumulativeAgentContent(s.patchValueText[entryKey], content)
 	}
 }
 
@@ -2400,16 +2644,17 @@ func (s *ndjsonTranscriptState) mergeAgentInferenceEvent(event ndjsonAgentInfere
 		s.FinalAgent.MessageID = step.ID
 	}
 	for valueIndex, value := range event.Value {
+		content := strings.TrimSpace(firstNonEmpty(value.Content, value.Text, value.Value))
 		s.mergeEventValueIntoPatchState(index, valueIndex, value)
-		switch strings.TrimSpace(strings.ToLower(value.Type)) {
-		case "thinking", "reasoning":
-			step.Reasoning = mergeCumulativeAgentContent(step.Reasoning, value.Content)
+		switch normalizePatchEntryType(value.Type) {
+		case "reasoning":
+			step.Reasoning = mergeCumulativeAgentContent(step.Reasoning, content)
 			s.Steps[index] = step
 			if err := s.emitFullReasoning(s.composeReasoningText(), sink); err != nil {
 				return err
 			}
 		case "text":
-			step.Text = mergeCumulativeAgentContent(step.Text, value.Content)
+			step.Text = mergeCumulativeAgentContent(step.Text, content)
 			s.Steps[index] = step
 			if err := s.emitFullText(step.Text, sink); err != nil {
 				return err
@@ -2682,7 +2927,7 @@ func consumeNDJSONStreamWithIdleClose(reader io.ReadCloser, threadID string, sin
 		idleC = nil
 	}
 	resetIdleTimer := func() {
-		if idleAfterAnswer <= 0 || !state.hasVisibleAnswer() || state.hasTerminalAnswer() {
+		if idleAfterAnswer <= 0 || !state.hasTerminalAnswer() {
 			return
 		}
 		if idleTimer == nil {
@@ -2769,6 +3014,133 @@ func (c *NotionAIClient) syncThread(ctx context.Context, threadID string) (map[s
 		return nil, err
 	}
 	return out, nil
+}
+
+func (c *NotionAIClient) syncRecordValuesWithFanoutReplay(ctx context.Context, payload map[string]any, referer string) (map[string]any, error) {
+	body, err := c.postJSONWithRefererRetrySyncRecordValues(ctx, payload, referer)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	fanoutItems := sliceValue(out["fanoutData"])
+	if len(fanoutItems) == 0 {
+		return out, nil
+	}
+	firstFanout := mapValue(fanoutItems[0])
+	if firstFanout == nil {
+		return out, nil
+	}
+	fanoutRequest := mapValue(firstFanout["request"])
+	if fanoutRequest == nil {
+		return out, nil
+	}
+	fanoutHeaders := mapValue(firstFanout["headers"])
+	cellHeader := strings.TrimSpace(stringValue(fanoutHeaders["x-notion-cell"]))
+	if cellHeader == "" {
+		return out, nil
+	}
+	headers := map[string]string{"x-notion-cell": cellHeader}
+	replayBody, replayErr := c.postJSONWithRefererAndHeaders(ctx, c.Config.NotionUpstream().API("syncRecordValuesSpaceInitial"), fanoutRequest, "application/json", referer, headers)
+	if replayErr != nil {
+		return nil, replayErr
+	}
+	var replayOut map[string]any
+	if err := json.Unmarshal(replayBody, &replayOut); err != nil {
+		return nil, err
+	}
+	return replayOut, nil
+}
+
+func (c *NotionAIClient) loadSpaceViewSettings(ctx context.Context, referer string) (string, map[string]any, error) {
+	spaceID := strings.TrimSpace(c.Session.SpaceID)
+	if spaceID == "" {
+		return "", nil, fmt.Errorf("space id is required")
+	}
+	spaceViewID := strings.TrimSpace(c.Session.SpaceViewID)
+	if spaceViewID == "" {
+		return "", nil, fmt.Errorf("space view id is required")
+	}
+	payload := map[string]any{
+		"requests": []map[string]any{
+			{
+				"pointer": map[string]any{
+					"table":   "space_view",
+					"id":      spaceViewID,
+					"spaceId": spaceID,
+				},
+				"version": -1,
+			},
+		},
+	}
+	out, err := c.syncRecordValuesWithFanoutReplay(ctx, payload, referer)
+	if err != nil {
+		return "", nil, err
+	}
+	spaceViewMap := mapValue(mapValue(out["recordMap"])["space_view"])
+	record := mapValue(spaceViewMap[spaceViewID])
+	value := mapValue(record["value"])
+	if nested := mapValue(value["value"]); nested != nil {
+		value = nested
+	}
+	settings := mapValue(value["settings"])
+	if settings == nil {
+		settings = map[string]any{}
+	}
+	return spaceViewID, cloneMapAny(settings), nil
+}
+
+func appendSidebarWorkflowID(settings map[string]any, workflowID string) map[string]any {
+	next := cloneMapAny(settings)
+	if next == nil {
+		next = map[string]any{}
+	}
+	seen := map[string]struct{}{}
+	ids := make([]string, 0, 8)
+	for _, raw := range sliceValue(next["sidebar_workflow_ids"]) {
+		id := strings.TrimSpace(stringValue(raw))
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	candidate := strings.TrimSpace(workflowID)
+	if candidate != "" {
+		if _, ok := seen[candidate]; !ok {
+			ids = append(ids, candidate)
+		}
+	}
+	next["sidebar_workflow_ids"] = ids
+	return next
+}
+
+func removeSidebarWorkflowID(settings map[string]any, workflowID string) map[string]any {
+	next := cloneMapAny(settings)
+	if next == nil {
+		next = map[string]any{}
+	}
+	target := strings.TrimSpace(workflowID)
+	seen := map[string]struct{}{}
+	ids := make([]string, 0, 8)
+	for _, raw := range sliceValue(next["sidebar_workflow_ids"]) {
+		id := strings.TrimSpace(stringValue(raw))
+		if id == "" || id == target {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	next["sidebar_workflow_ids"] = ids
+	return next
 }
 
 func (c *NotionAIClient) syncThreadMessages(ctx context.Context, threadID string, messageIDs []string) (map[string]any, error) {
@@ -3058,7 +3430,7 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 	body, err := c.postJSON(ctx, c.Config.NotionUpstream().API("getCustomAgents"), map[string]any{
 		"spaceId":        c.Session.SpaceID,
 		"filter":         "all",
-		"includeDeleted": true,
+		"includeDeleted": false,
 	}, "application/json")
 	if err != nil {
 		return nil, err
@@ -3066,10 +3438,52 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 	var out struct {
 		AgentIDs              []string         `json:"agentIds"`
 		MostRecentTranscripts []map[string]any `json:"mostRecentTranscripts"`
-		ActivityScores        map[string]any   `json:"activityScores"`
+		ActivityScores        any              `json:"activityScores"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
+	}
+	activityScoreByAgentID := map[string]string{}
+	switch raw := out.ActivityScores.(type) {
+	case map[string]any:
+		for key, value := range raw {
+			id := strings.TrimSpace(key)
+			if id == "" {
+				continue
+			}
+			score := strings.TrimSpace(stringValue(value))
+			if score == "" {
+				continue
+			}
+			activityScoreByAgentID[id] = score
+		}
+	case []any:
+		for _, item := range raw {
+			entry := mapValue(item)
+			if entry == nil {
+				continue
+			}
+			id := strings.TrimSpace(firstNonEmpty(
+				stringValue(entry["workflowId"]),
+				stringValue(entry["workflow_id"]),
+				stringValue(entry["agentId"]),
+				stringValue(entry["agent_id"]),
+				stringValue(entry["id"]),
+			))
+			if id == "" {
+				continue
+			}
+			score := strings.TrimSpace(firstNonEmpty(
+				stringValue(entry["score"]),
+				stringValue(entry["activityScore"]),
+				stringValue(entry["activity_score"]),
+				stringValue(entry["value"]),
+			))
+			if score == "" {
+				continue
+			}
+			activityScoreByAgentID[id] = score
+		}
 	}
 	agentIDs := make([]string, 0, len(out.AgentIDs))
 	seen := map[string]struct{}{}
@@ -3110,19 +3524,19 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 				"version": -1,
 			})
 		}
-		syncBody, syncErr := c.postJSON(ctx, c.Config.NotionUpstream().API("syncRecordValuesSpaceInitial"), map[string]any{
+		syncOut, syncErr := c.syncRecordValuesWithFanoutReplay(ctx, map[string]any{
 			"requests": requests,
-		}, "application/json")
+		}, "")
 		if syncErr == nil {
-			var syncOut map[string]any
-			if err := json.Unmarshal(syncBody, &syncOut); err == nil {
-				workflowMap := mapValue(mapValue(syncOut["recordMap"])["workflow"])
-				for _, id := range agentIDs {
-					workflowRecord := mapValue(workflowMap[id])
-					workflowValue := mapValue(workflowRecord["value"])
-					if workflowValue != nil {
-						workflowValueByAgentID[id] = workflowValue
-					}
+			workflowMap := mapValue(mapValue(syncOut["recordMap"])["workflow"])
+			for _, id := range agentIDs {
+				workflowRecord := mapValue(workflowMap[id])
+				workflowValue := mapValue(workflowRecord["value"])
+				if nested := mapValue(workflowValue["value"]); nested != nil {
+					workflowValue = nested
+				}
+				if mapValue(workflowValue["data"]) != nil {
+					workflowValueByAgentID[id] = workflowValue
 				}
 			}
 		}
@@ -3130,8 +3544,19 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 	items := make([]CustomAgentSummary, 0, len(agentIDs))
 	for _, id := range agentIDs {
 		workflowValue := workflowValueByAgentID[id]
+		if workflowValue == nil {
+			continue
+		}
 		data := mapValue(workflowValue["data"])
+		if data == nil {
+			continue
+		}
 		name := strings.TrimSpace(stringValue(data["name"]))
+		if name == "" {
+			if transcript := latestTranscriptByAgentID[id]; transcript != nil {
+				name = strings.TrimSpace(stringValue(transcript["title"]))
+			}
+		}
 		icon := strings.TrimSpace(stringValue(data["icon"]))
 		modelType := strings.TrimSpace(stringValue(mapValue(data["model"])["type"]))
 		alive := true
@@ -3139,6 +3564,9 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 			if rawAlive, exists := workflowValue["alive"]; exists {
 				alive = booleanValue(rawAlive)
 			}
+		}
+		if !alive {
+			continue
 		}
 		agent := CustomAgentSummary{
 			ID:              id,
@@ -3152,7 +3580,7 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 			agent.ThreadID = strings.TrimSpace(stringValue(transcript["id"]))
 			agent.LastTranscript = cloneMapAny(transcript)
 		}
-		if score := strings.TrimSpace(stringValue(out.ActivityScores[id])); score != "" {
+		if score := strings.TrimSpace(activityScoreByAgentID[id]); score != "" {
 			agent.LastActivityScore = score
 		}
 		items = append(items, agent)
@@ -3163,12 +3591,19 @@ func (c *NotionAIClient) listCustomAgents(ctx context.Context) ([]CustomAgentSum
 func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentMutationRequest) (CustomAgentSummary, error) {
 	spaceID := strings.TrimSpace(c.Session.SpaceID)
 	userID := strings.TrimSpace(c.Session.UserID)
+	spaceViewID, spaceViewSettings, err := c.loadSpaceViewSettings(ctx, "")
+	if err != nil {
+		return CustomAgentSummary{}, err
+	}
 	workflowID := randomUUID()
-	instructionPageID := randomUUID()
-	guideBlockID := randomUUID()
+	workflowID = randomNotionSpaceScopedID(spaceID)
+	instructionPageID := randomNotionSpaceScopedID(spaceID)
+	guideBlockID := randomNotionSpaceScopedID(spaceID)
 	moduleID := randomUUID()
 	triggerID := randomUUID()
-	textInstanceID := randomUUID()
+	textInstanceID := randomTokenURLSafe(22)
+	guideTextInstanceID := randomTokenURLSafe(22)
+	guideTitleRef := guideTextInstanceID + ",\"start\",\"end\""
 	modelType := strings.TrimSpace(req.ModelType)
 	if modelType == "" {
 		modelType = "apricot-sorbet-high"
@@ -3179,18 +3614,19 @@ func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentM
 	}
 	icon := strings.TrimSpace(req.Icon)
 	if icon == "" {
-		icon = "https://www.notion.so/images/customAgentAvatars/puzzle-yellow.png"
+		icon = "https://www.notion.so/images/customAgentAvatars/puzzle-blue.png"
 	}
 	createdAtMillis := time.Now().UnixMilli()
 	payload := map[string]any{
-		"requestId": randomUUID(),
+		"requestId":    randomUUID(),
+		"referer":      "/library/agents?spaceId=" + spaceID,
+		"userTimeZone": "Asia/Shanghai",
 		"transactions": []map[string]any{
 			{
 				"id":      randomUUID(),
 				"spaceId": spaceID,
 				"debug": map[string]any{
 					"userAction": "agentActions.createBlankAgent",
-					"userFlow":   "user_flow_create_page",
 				},
 				"operations": []map[string]any{
 					{
@@ -3235,9 +3671,8 @@ func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentM
 										},
 									},
 								},
-								"name":  name,
-								"icon":  icon,
-								"model": map[string]any{"type": modelType},
+								"name": name,
+								"icon": icon,
 							},
 							"permissions": []map[string]any{
 								{
@@ -3296,9 +3731,9 @@ func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentM
 							"type":           "insertText",
 							"textInstanceId": textInstanceID,
 							"searchLabel":    "",
-							"id":             []any{randomUUID()[:12], 1},
+							"id":             []any{randomTokenURLSafe(12), 1},
 							"originId":       "start",
-							"content":        "说明",
+							"content":        "Instructions",
 						},
 					},
 					{
@@ -3320,8 +3755,17 @@ func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentM
 							"last_edited_time": createdAtMillis + 2,
 							"crdt_data": map[string]any{
 								"title": map[string]any{
-									"r": randomUUID() + ",\"start\",\"end\"",
-									"n": map[string]any{},
+									"r": guideTitleRef,
+									"n": map[string]any{
+										guideTitleRef: map[string]any{
+											"s": map[string]any{
+												"x": guideTextInstanceID,
+												"i": []map[string]any{{"t": "s"}, {"t": "e"}},
+												"l": "",
+											},
+											"c": []any{},
+										},
+									},
 								},
 							},
 							"crdt_format_version": 1,
@@ -3393,31 +3837,61 @@ func (c *NotionAIClient) createCustomAgent(ctx context.Context, req CustomAgentM
 							"last_edited_by_table": "notion_user",
 						},
 					},
+					{
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      instructionPageID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "update",
+						"args": map[string]any{
+							"last_edited_time":     createdAtMillis + 3,
+							"last_edited_by_id":    userID,
+							"last_edited_by_table": "notion_user",
+						},
+					},
+					{
+						"pointer": map[string]any{
+							"table":   "block",
+							"id":      guideBlockID,
+							"spaceId": spaceID,
+						},
+						"path":    []string{},
+						"command": "update",
+						"args": map[string]any{
+							"last_edited_time":     createdAtMillis + 3,
+							"last_edited_by_id":    userID,
+							"last_edited_by_table": "notion_user",
+						},
+					},
 				},
 			},
 			{
-				"id": randomUUID(),
+				"id":      randomUUID(),
+				"spaceId": spaceID,
 				"debug": map[string]any{
 					"userAction": "sidebarWorkflowsActions.addSidebarWorkflow",
 				},
 				"operations": []map[string]any{
 					{
 						"pointer": map[string]any{
-							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"id":      spaceViewID,
 							"table":   "space_view",
 							"spaceId": spaceID,
 						},
 						"path":    []string{"settings"},
 						"command": "update",
-						"args": map[string]any{
-							"sidebar_workflow_ids": []string{workflowID},
-						},
+						"args":    appendSidebarWorkflowID(spaceViewSettings, workflowID),
 					},
 				},
 			},
 		},
 	}
-	if _, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json"); err != nil {
+	if err := c.postSaveTransactionsFanoutWithRetry(ctx, payload); err != nil {
+		return CustomAgentSummary{}, err
+	}
+	if _, err := c.updateCustomAgentModel(ctx, workflowID, modelType); err != nil {
 		return CustomAgentSummary{}, err
 	}
 	return CustomAgentSummary{
@@ -3440,9 +3914,15 @@ func (c *NotionAIClient) updateCustomAgentModel(ctx context.Context, workflowID 
 	}
 	spaceID := strings.TrimSpace(c.Session.SpaceID)
 	userID := strings.TrimSpace(c.Session.UserID)
+	spaceViewID, spaceViewSettings, err := c.loadSpaceViewSettings(ctx, "")
+	if err != nil {
+		return CustomAgentSummary{}, err
+	}
 	nowMillis := time.Now().UnixMilli()
 	payload := map[string]any{
-		"requestId": randomUUID(),
+		"requestId":    randomUUID(),
+		"referer":      "/library/agents?spaceId=" + spaceID,
+		"userTimeZone": "Asia/Shanghai",
 		"transactions": []map[string]any{
 			{
 				"id":      randomUUID(),
@@ -3457,7 +3937,7 @@ func (c *NotionAIClient) updateCustomAgentModel(ctx context.Context, workflowID 
 							"id":      workflowID,
 							"spaceId": spaceID,
 						},
-						"command": "set",
+						"command": "update",
 						"path":    []string{"data", "model"},
 						"args": map[string]any{
 							"type": modelType,
@@ -3480,48 +3960,27 @@ func (c *NotionAIClient) updateCustomAgentModel(ctx context.Context, workflowID 
 				},
 			},
 			{
-				"id": randomUUID(),
+				"id":      randomUUID(),
+				"spaceId": spaceID,
 				"debug": map[string]any{
-					"userAction": "sidebarWorkflowsActions.removeSidebarWorkflow",
+					"userAction": "sidebarWorkflowsActions.updateSidebarWorkflowSettings",
 				},
 				"operations": []map[string]any{
 					{
 						"pointer": map[string]any{
-							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"id":      spaceViewID,
 							"table":   "space_view",
 							"spaceId": spaceID,
 						},
 						"path":    []string{"settings"},
 						"command": "update",
-						"args": map[string]any{
-							"sidebar_workflow_ids": []string{},
-						},
-					},
-				},
-			},
-			{
-				"id": randomUUID(),
-				"debug": map[string]any{
-					"userAction": "sidebarWorkflowsActions.removeSidebarWorkflow",
-				},
-				"operations": []map[string]any{
-					{
-						"pointer": map[string]any{
-							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
-							"table":   "space_view",
-							"spaceId": spaceID,
-						},
-						"path":    []string{"settings"},
-						"command": "update",
-						"args": map[string]any{
-							"sidebar_workflow_ids": []string{},
-						},
+						"args":    appendSidebarWorkflowID(spaceViewSettings, workflowID),
 					},
 				},
 			},
 		},
 	}
-	if _, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json"); err != nil {
+	if err := c.postSaveTransactionsFanoutWithRetry(ctx, payload); err != nil {
 		return CustomAgentSummary{}, err
 	}
 	return CustomAgentSummary{
@@ -3538,9 +3997,15 @@ func (c *NotionAIClient) softDeleteCustomAgent(ctx context.Context, workflowID s
 	}
 	spaceID := strings.TrimSpace(c.Session.SpaceID)
 	userID := strings.TrimSpace(c.Session.UserID)
+	spaceViewID, spaceViewSettings, err := c.loadSpaceViewSettings(ctx, "")
+	if err != nil {
+		return err
+	}
 	nowMillis := time.Now().UnixMilli()
 	payload := map[string]any{
-		"requestId": randomUUID(),
+		"requestId":    randomUUID(),
+		"referer":      "/library/agents?spaceId=" + spaceID,
+		"userTimeZone": "Asia/Shanghai",
 		"transactions": []map[string]any{
 			{
 				"id":      randomUUID(),
@@ -3576,29 +4041,50 @@ func (c *NotionAIClient) softDeleteCustomAgent(ctx context.Context, workflowID s
 				},
 			},
 			{
-				"id": randomUUID(),
+				"id":      randomUUID(),
+				"spaceId": spaceID,
 				"debug": map[string]any{
 					"userAction": "sidebarWorkflowsActions.removeSidebarWorkflow",
 				},
 				"operations": []map[string]any{
 					{
 						"pointer": map[string]any{
-							"id":      firstNonEmpty(strings.TrimSpace(c.Session.SpaceViewID), randomUUID()),
+							"id":      spaceViewID,
 							"table":   "space_view",
 							"spaceId": spaceID,
 						},
 						"path":    []string{"settings"},
 						"command": "update",
-						"args": map[string]any{
-							"sidebar_workflow_ids": []string{},
-						},
+						"args":    removeSidebarWorkflowID(spaceViewSettings, workflowID),
 					},
 				},
 			},
 		},
 	}
-	_, err := c.postJSON(ctx, c.Config.NotionUpstream().API("saveTransactionsFanout"), payload, "application/json")
-	return err
+	if err := c.postSaveTransactionsFanoutWithRetry(ctx, payload); err != nil {
+		return err
+	}
+	deleteBody, deleteErr := c.postJSON(ctx, c.Config.NotionUpstream().API("deleteContentRecords"), map[string]any{
+		"records": []map[string]any{
+			{
+				"table":   "workflow",
+				"id":      workflowID,
+				"spaceId": spaceID,
+			},
+		},
+		"permanentlyDelete": true,
+	}, "application/json")
+	if deleteErr != nil {
+		return deleteErr
+	}
+	var deleteOut map[string]any
+	if err := json.Unmarshal(deleteBody, &deleteOut); err != nil {
+		return err
+	}
+	if okay, hasOkay := deleteOut["okay"]; hasOkay && !booleanValue(okay) {
+		return fmt.Errorf("deleteContentRecords returned not okay")
+	}
+	return nil
 }
 
 func (c *NotionAIClient) deleteThread(ctx context.Context, threadID string) error {

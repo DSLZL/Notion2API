@@ -28,7 +28,18 @@ export function useCreateAgent() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: AgentCreatePayload) => api.post<{ success: boolean; item?: AgentEntry }>('/admin/agents', payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.AGENTS }),
+    onSuccess: (resp) => {
+      if (resp.item) {
+        qc.setQueryData<AgentEntry[]>(QUERY_KEYS.AGENTS, (current) => {
+          const list = current ?? []
+          if (list.some((item) => item.id === resp.item!.id)) {
+            return list
+          }
+          return [resp.item!, ...list]
+        })
+      }
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.AGENTS })
+    },
   })
 }
 
@@ -37,7 +48,14 @@ export function useUpdateAgentModel() {
   return useMutation({
     mutationFn: ({ id, model_type }: { id: string; model_type: string }) =>
       api.patch<{ success: boolean; item?: AgentEntry }>(`/admin/agents/${id}/model`, { model_type } as AgentModelPatchPayload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.AGENTS }),
+    onSuccess: (resp, vars) => {
+      if (resp.item) {
+        qc.setQueryData<AgentEntry[]>(QUERY_KEYS.AGENTS, (current) =>
+          (current ?? []).map((item) => (item.id === vars.id ? { ...item, ...resp.item } : item)),
+        )
+      }
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.AGENTS })
+    },
   })
 }
 
@@ -45,7 +63,20 @@ export function useDeleteAgent() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.delete<{ success: boolean; message?: string }>(`/admin/agents/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.AGENTS }),
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: QUERY_KEYS.AGENTS })
+      const previous = qc.getQueryData<AgentEntry[]>(QUERY_KEYS.AGENTS)
+      qc.setQueryData<AgentEntry[]>(QUERY_KEYS.AGENTS, (current) => (current ?? []).filter((item) => item.id !== id))
+      return { previous }
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        qc.setQueryData<AgentEntry[]>(QUERY_KEYS.AGENTS, context.previous)
+      }
+    },
+    onSuccess: (_resp, id) => {
+      qc.setQueryData<AgentEntry[]>(QUERY_KEYS.AGENTS, (current) => (current ?? []).filter((item) => item.id !== id))
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.AGENTS }),
   })
 }
-

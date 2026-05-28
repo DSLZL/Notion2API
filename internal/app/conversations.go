@@ -1141,6 +1141,13 @@ func (a *App) notionClientForAccount(ctx context.Context, accountEmail string) (
 			return newNotionAIClient(session, cfg, email), nil
 		}
 	}
+	if account, _, ok := cfg.ResolveActiveAccount(); ok {
+		account = ensureAccountPaths(cfg, account)
+		session, err := loadSessionInfoForAccountRefresh(cfg, account)
+		if err == nil {
+			return newNotionAIClient(session, cfg, account.Email), nil
+		}
+	}
 	if fallbackClient != nil {
 		return fallbackClient, nil
 	}

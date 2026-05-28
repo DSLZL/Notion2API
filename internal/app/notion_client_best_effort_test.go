@@ -298,6 +298,37 @@ func TestConsumeNDJSONStreamWithIdleCloseRejectsOversizedLine(t *testing.T) {
 	}
 }
 
+func TestConsumeNDJSONStreamWithIdleCloseDoesNotCutOffBeforeTerminalAnswer(t *testing.T) {
+	threadID := "thread-idle-cutoff"
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		_, _ = io.WriteString(
+			pw,
+			`{"type":"agent-inference","id":"msg-1","value":[{"type":"text","content":"给你写了一篇《夜雨听檐》,关于"}]}`+"\n",
+		)
+		time.Sleep(60 * time.Millisecond)
+		_, _ = io.WriteString(
+			pw,
+			`{"type":"agent-inference","id":"msg-1","value":[{"type":"text","content":"给你写了一篇《夜雨听檐》,关于深夜独处时"}],"finishedAt":"2026-05-27T12:00:00.000Z"}`+"\n",
+		)
+	}()
+
+	parsed, err := consumeNDJSONStreamWithIdleClose(pr, threadID, InferenceStreamSink{}, 15*time.Millisecond)
+	if err != nil {
+		t.Fatalf("consume NDJSON stream failed: %v", err)
+	}
+	if !parsed.FinalAgent.Completed {
+		t.Fatalf("expected terminal answer completed=true")
+	}
+	if got, want := parsed.FinalAgent.Text, "给你写了一篇《夜雨听檐》,关于深夜独处时"; got != want {
+		t.Fatalf("unexpected final text: got %q want %q", got, want)
+	}
+	if got := parsed.LineCount; got < 2 {
+		t.Fatalf("expected at least two lines consumed, got %d", got)
+	}
+}
+
 func TestConsumeNDJSONStreamParsesFinalLineWithoutTrailingNewline(t *testing.T) {
 	threadID := "thread-error-no-newline-fallback"
 	messageID := "msg-error-no-newline-fallback"
