@@ -43,7 +43,8 @@
     "persist_conversation_snapshots": true,
     "persist_responses": true,
     "persist_continuation_sessions": true,
-    "persist_sillytavern_bindings": true
+    "persist_sillytavern_bindings": true,
+    "conversation_retention_hours": 24
   },
   "limits": {
     "max_request_body_bytes": 4194304

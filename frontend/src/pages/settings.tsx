@@ -429,15 +429,25 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <span className="text-sm text-ink">{t('settings.persistConversations')}</span>
             <Toggle
-              checked={getVal(['config', 'persist_conversations'], true) as boolean}
-              onChange={(v) => setVal(['config', 'persist_conversations'], v)}
+              checked={getVal(['config', 'storage', 'persist_conversations'], true) as boolean}
+              onChange={(v) => setVal(['config', 'storage', 'persist_conversations'], v)}
             />
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-ink">{t('settings.persistResponses')}</span>
             <Toggle
-              checked={getVal(['config', 'persist_responses'], true) as boolean}
-              onChange={(v) => setVal(['config', 'persist_responses'], v)}
+              checked={getVal(['config', 'storage', 'persist_responses'], true) as boolean}
+              onChange={(v) => setVal(['config', 'storage', 'persist_responses'], v)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-ink">{t('settings.conversationRetentionHours')}</label>
+            <Input
+              type="number"
+              min="0"
+              value={getVal(['config', 'storage', 'conversation_retention_hours'], 24) as number}
+              onChange={(e) => setVal(['config', 'storage', 'conversation_retention_hours'], Math.max(0, Number(e.target.value)))}
+              className="max-w-[200px]"
             />
           </div>
         </div>

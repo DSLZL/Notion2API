@@ -698,12 +698,12 @@ func (s *ConversationStore) Complete(conversationID string, result InferenceResu
 	s.mu.Unlock()
 	if ok {
 		s.broadcast(ConversationEvent{
-		Type:           "conversation.completed",
-		ConversationID: conversationID,
-		At:             now,
-		Summary:        &summary,
-		Conversation:   entry,
-	})
+			Type:           "conversation.completed",
+			ConversationID: conversationID,
+			At:             now,
+			Summary:        &summary,
+			Conversation:   entry,
+		})
 	}
 }
 
@@ -745,13 +745,13 @@ func (s *ConversationStore) Fail(conversationID string, err error) {
 	s.mu.Unlock()
 	if ok {
 		s.broadcast(ConversationEvent{
-		Type:           "conversation.failed",
-		ConversationID: conversationID,
-		At:             now,
-		Error:          message,
-		Summary:        &summary,
-		Conversation:   entry,
-	})
+			Type:           "conversation.failed",
+			ConversationID: conversationID,
+			At:             now,
+			Error:          message,
+			Summary:        &summary,
+			Conversation:   entry,
+		})
 	}
 }
 
@@ -806,6 +806,38 @@ func (s *ConversationStore) ListExpiredEphemeral(now time.Time, limit int) []Con
 			continue
 		}
 		if entry.AutoDeleteAt == nil || entry.AutoDeleteAt.After(now) {
+			continue
+		}
+		items = append(items, copyConversationEntryValue(entry))
+		if len(items) >= limit {
+			break
+		}
+	}
+	return items
+}
+
+func (s *ConversationStore) ListExpiredByRetention(now time.Time, retention time.Duration, limit int) []ConversationEntry {
+	if retention <= 0 {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = len(s.order)
+	}
+	items := make([]ConversationEntry, 0, minInt(limit, len(s.order)))
+	for _, id := range s.order {
+		entry := s.items[id]
+		if entry == nil || entry.RemoteOnly {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(entry.Origin), "notion") {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(entry.Status), "running") {
+			continue
+		}
+		if entry.CreatedAt.IsZero() || entry.CreatedAt.Add(retention).After(now) {
 			continue
 		}
 		items = append(items, copyConversationEntryValue(entry))

@@ -70,6 +70,7 @@ type StorageConfig struct {
 	PersistResponses             *bool  `json:"persist_responses,omitempty"`
 	PersistContinuationSessions  *bool  `json:"persist_continuation_sessions,omitempty"`
 	PersistSillyTavernBindings   *bool  `json:"persist_sillytavern_bindings,omitempty"`
+	ConversationRetentionHours   *int   `json:"conversation_retention_hours,omitempty"`
 }
 
 type LimitsConfig struct {
@@ -498,7 +499,8 @@ func defaultConfig() AppConfig {
 			StoreTTLSeconds: 3600,
 		},
 		Storage: StorageConfig{
-			PersistConversations: true,
+			PersistConversations:       true,
+			ConversationRetentionHours: intPtr(24),
 		},
 		Limits: LimitsConfig{
 			MaxRequestBodyBytes: 4 * 1024 * 1024,
@@ -653,6 +655,11 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	cfg.Storage.SQLitePath = strings.TrimSpace(cfg.Storage.SQLitePath)
 	if cfg.Storage.SQLitePath == "" && strings.TrimSpace(cfg.ConfigPath) != "" {
 		cfg.Storage.SQLitePath = "data/notion2api.sqlite"
+	}
+	if cfg.Storage.ConversationRetentionHours == nil {
+		cfg.Storage.ConversationRetentionHours = intPtr(24)
+	} else if *cfg.Storage.ConversationRetentionHours < 0 {
+		cfg.Storage.ConversationRetentionHours = intPtr(0)
 	}
 	if strings.TrimSpace(cfg.LoginHelper.SessionsDir) == "" {
 		cfg.LoginHelper.SessionsDir = "probe_files/notion_accounts"
@@ -826,6 +833,20 @@ func storageBoolWithFallback(value *bool, fallback bool) bool {
 		return *value
 	}
 	return fallback
+}
+
+func intPtr(value int) *int {
+	return &value
+}
+
+func effectiveConversationRetentionHours(cfg AppConfig) int {
+	if cfg.Storage.ConversationRetentionHours == nil {
+		return 24
+	}
+	if *cfg.Storage.ConversationRetentionHours < 0 {
+		return 0
+	}
+	return *cfg.Storage.ConversationRetentionHours
 }
 
 func conversationSnapshotsPersistenceEnabled(cfg AppConfig) bool {

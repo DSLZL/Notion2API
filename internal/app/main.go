@@ -107,6 +107,7 @@ type App struct {
 const (
 	ephemeralConversationCleanupInterval  = time.Minute
 	ephemeralConversationCleanupBatchSize = 24
+	conversationRetentionCleanupBatchSize = 24
 	sillyTavernQuietConversationTTL       = 10 * time.Minute
 	corsAllowOrigin                       = "*"
 	corsAllowHeaders                      = "Authorization, Content-Type, X-Admin-Token, X-Requested-With"
@@ -1579,12 +1580,33 @@ func (a *App) cleanupExpiredEphemeralConversations() {
 	}
 }
 
+func (a *App) cleanupExpiredRetainedConversations() {
+	if a == nil || a.State == nil {
+		return
+	}
+	cfg, _, _ := a.State.Snapshot()
+	retentionHours := effectiveConversationRetentionHours(cfg)
+	if retentionHours <= 0 {
+		return
+	}
+	retention := time.Duration(retentionHours) * time.Hour
+	expired := a.State.conversations().ListExpiredByRetention(time.Now().UTC(), retention, conversationRetentionCleanupBatchSize)
+	for _, entry := range expired {
+		if err := a.deleteConversation(entry.ID); err != nil {
+			log.Printf("[cleanup] delete retained conversation=%s thread=%s failed: %v", entry.ID, entry.ThreadID, err)
+			continue
+		}
+		log.Printf("[cleanup] deleted retained conversation=%s thread=%s retention_hours=%d", entry.ID, entry.ThreadID, retentionHours)
+	}
+}
+
 func (a *App) StartEphemeralConversationCleanupLoop(parent context.Context) {
 	if a == nil || a.State == nil {
 		return
 	}
 	go func() {
 		a.cleanupExpiredEphemeralConversations()
+		a.cleanupExpiredRetainedConversations()
 		timer := time.NewTimer(ephemeralConversationCleanupInterval)
 		defer timer.Stop()
 		for {
@@ -1593,6 +1615,7 @@ func (a *App) StartEphemeralConversationCleanupLoop(parent context.Context) {
 				return
 			case <-timer.C:
 				a.cleanupExpiredEphemeralConversations()
+				a.cleanupExpiredRetainedConversations()
 				timer.Reset(ephemeralConversationCleanupInterval)
 			}
 		}
@@ -1789,7 +1812,11 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	request.SuppressReasoningOutput, request.StreamReasoningWarmup = resolveReasoningPreference(typed.ShowThoughts, typed.Stream, reqCtx.cfg.Features)
 	freshThreadMode := forceFreshThreadPerRequest(reqCtx.cfg)
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveContinuationConversationWithExplicit("", hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
+	if freshThreadMode {
+		reqCtx.preferredConversationID = ""
+		reqCtx.explicitThreadID = ""
+		request.PinnedAccountEmail = reqCtx.requestedAccount
+	} else if matched, ok := a.resolveContinuationConversationWithExplicit("", hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
 		applyContinuationTargetToRequest(&request, &conversation, matched, freshThreadMode, reqCtx.requestedAccount, latestPrompt, promptText, normalized.Attachments)
 	} else {
 		request.PinnedAccountEmail = reqCtx.requestedAccount
@@ -1873,24 +1900,28 @@ func (a *App) handleSillyTavernChatCompletionsPayload(w http.ResponseWriter, r *
 	freshThreadMode := forceFreshThreadPerRequest(cfg)
 
 	preferredConversationID := requestedConversationID(r, payload)
+	if freshThreadMode {
+		preferredConversationID = ""
+	}
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveSillyTavernContinuation(r, payload, ctx); ok {
+	if freshThreadMode {
+		request.PinnedAccountEmail = requestedAccountEmail(r, payload)
+		preferActiveAccountForRequest(cfg, &request)
+		if ctx.Mode == sillyTavernModeQuiet || ctx.Mode == sillyTavernModeImpersona {
+			request.SuppressUpstreamThreadPersistence = true
+		}
+	} else if matched, ok := a.resolveSillyTavernContinuation(r, payload, ctx); ok {
 		request.SuppressUpstreamThreadPersistence = matched.SuppressPersist
 		conversation = matched.Target.Conversation
 		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
-		if freshThreadMode {
-			request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
-			request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, ctx.LatestPrompt, ctx.Normalized.Attachments, request.Prompt)
-		} else {
-			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-			request.continuationDraft = buildContinuationDraft(matched.Target.Session)
-			request.ForceSessionRepeatTurn = matched.ForceRepeatTurn
-			if request.UpstreamThreadID != "" {
-				if ctx.Mode == sillyTavernModeContinue {
-					request.Prompt = sillyTavernContinuationPrompt(payload)
-				} else {
-					request.Prompt = ctx.LatestPrompt
-				}
+		request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
+		request.continuationDraft = buildContinuationDraft(matched.Target.Session)
+		request.ForceSessionRepeatTurn = matched.ForceRepeatTurn
+		if request.UpstreamThreadID != "" {
+			if ctx.Mode == sillyTavernModeContinue {
+				request.Prompt = sillyTavernContinuationPrompt(payload)
+			} else {
+				request.Prompt = ctx.LatestPrompt
 			}
 		}
 	} else {
@@ -1947,7 +1978,12 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	stream := typed.Stream
 	var previousResponse map[string]any
+	cfgSnapshot, _, _ := a.State.Snapshot()
+	freshThreadMode := forceFreshThreadPerRequest(cfgSnapshot)
 	previousResponseID := strings.TrimSpace(typed.PreviousResponseID)
+	if freshThreadMode {
+		previousResponseID = ""
+	}
 	if previousResponseID != "" {
 		var ok bool
 		previousResponse, ok = a.State.getResponse(previousResponseID)
@@ -1986,15 +2022,16 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		requestedWebSearchFromTyped(typed.UseWebSearch, typed.Metadata, typed.Tools, reqCtx.cfg.Features.UseWebSearch),
 	)
 	request.SuppressReasoningOutput, request.StreamReasoningWarmup = resolveReasoningPreference(typed.ShowThoughts, typed.Stream, reqCtx.cfg.Features)
-	freshThreadMode := forceFreshThreadPerRequest(reqCtx.cfg)
+	freshThreadMode = forceFreshThreadPerRequest(reqCtx.cfg)
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveContinuationConversationWithExplicit(previousResponseID, hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
+	if freshThreadMode {
+		reqCtx.preferredConversationID = ""
+		reqCtx.explicitThreadID = ""
+		request.PinnedAccountEmail = reqCtx.requestedAccount
+	} else if matched, ok := a.resolveContinuationConversationWithExplicit(previousResponseID, hiddenPrompt, normalized.Segments, reqCtx.preferredConversationID, reqCtx.explicitThreadID); ok {
 		applyContinuationTargetToRequest(&request, &conversation, matched, freshThreadMode, reqCtx.requestedAccount, latestPrompt, promptText, normalized.Attachments)
 	} else {
 		request.PinnedAccountEmail = reqCtx.requestedAccount
-	}
-	if freshThreadMode && strings.TrimSpace(conversation.ID) == "" {
-		request.Prompt = buildFreshThreadReplayPromptFromStoredResponse(normalized.PreviousResponsePrompt, latestPrompt, normalized.Attachments, request.Prompt)
 	}
 	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), reqCtx.preferredConversationID)
 	conversationID := a.startConversationTurn(conversation.ID, reqCtx.preferredConversationID, "api", "responses", latestPrompt, request)

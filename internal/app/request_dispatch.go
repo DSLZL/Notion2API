@@ -295,7 +295,7 @@ func (a *App) probeAccountProtocolHealth(ctx context.Context, cfg AppConfig, ses
 	probeCtx, cancel := context.WithTimeout(ctx, dispatchProtocolProbeTimeout(cfg))
 	defer cancel()
 	client := newNotionAIClient(session, cfg, "")
-	_, err := client.listInferenceTranscripts(probeCtx)
+	_, err := client.listInferenceTranscripts(probeCtx, 1)
 	if isDispatchContextAbort(probeCtx, err) {
 		a.markAccountProtocolProbeSuccess(accountKey, now)
 		return nil

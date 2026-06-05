@@ -92,7 +92,7 @@ func assertConversationContinued(t *testing.T, app *App, conversationID string, 
 	}
 }
 
-func TestHandleChatCompletionsFreshThreadReplaysLocalConversation(t *testing.T) {
+func TestHandleChatCompletionsFreshThreadIgnoresExplicitConversationID(t *testing.T) {
 	app := newFreshThreadTestApp(t)
 	seeded := seedCompletedConversation(t, app, "conv-chat", "Hello", "Hi there", "thread-old-chat")
 
@@ -123,8 +123,9 @@ func TestHandleChatCompletionsFreshThreadReplaysLocalConversation(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status mismatch: got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-Conversation-ID"); got != seeded.ID {
-		t.Fatalf("conversation header mismatch: got %q want %q", got, seeded.ID)
+	newConversationID := rec.Header().Get("X-Conversation-ID")
+	if newConversationID == "" || newConversationID == seeded.ID {
+		t.Fatalf("expected a new conversation id, got %q old=%q", newConversationID, seeded.ID)
 	}
 	if captured.UpstreamThreadID != "" {
 		t.Fatalf("expected empty upstream thread id, got %q", captured.UpstreamThreadID)
@@ -132,22 +133,25 @@ func TestHandleChatCompletionsFreshThreadReplaysLocalConversation(t *testing.T) 
 	if captured.continuationDraft != nil {
 		t.Fatalf("expected no continuation draft in fresh-thread mode")
 	}
-	if !captured.ForceLocalConversationContinue {
-		t.Fatalf("expected ForceLocalConversationContinue to be enabled")
+	if captured.ForceLocalConversationContinue {
+		t.Fatalf("expected fresh-thread mode not to continue the local conversation")
 	}
-	if strings.TrimSpace(captured.Prompt) == "How are you?" {
-		t.Fatalf("expected replay prompt, got latest prompt only: %q", captured.Prompt)
+	if got := strings.TrimSpace(captured.Prompt); got != "How are you?" {
+		t.Fatalf("prompt mismatch: got %q want latest input only", got)
 	}
-	assertPromptContains(t, captured.Prompt,
-		"Continue the conversation using the transcript below.",
-		"[user]\nHello",
-		"[assistant]\nHi there",
-		"[user]\nHow are you?",
-	)
-	assertConversationContinued(t, app, seeded.ID, "thread-new-chat", "Doing well.")
+	if _, ok := app.State.conversations().Get(newConversationID); !ok {
+		t.Fatalf("new conversation %s missing", newConversationID)
+	}
+	oldEntry, ok := app.State.conversations().Get(seeded.ID)
+	if !ok {
+		t.Fatalf("seeded conversation %s missing", seeded.ID)
+	}
+	if oldEntry.ThreadID != "thread-old-chat" || len(oldEntry.Messages) != len(seeded.Messages) {
+		t.Fatalf("expected seeded conversation to remain unchanged, got thread=%q messages=%d", oldEntry.ThreadID, len(oldEntry.Messages))
+	}
 }
 
-func TestHandleResponsesFreshThreadReplaysLocalConversation(t *testing.T) {
+func TestHandleResponsesFreshThreadIgnoresConversationAndPreviousResponse(t *testing.T) {
 	app := newFreshThreadTestApp(t)
 	seeded := seedCompletedConversation(t, app, "conv-responses", "Please remember this.", "Remembered.", "thread-old-responses")
 
@@ -164,9 +168,10 @@ func TestHandleResponsesFreshThreadReplaysLocalConversation(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", mustJSONBody(t, map[string]any{
-		"model":           "gpt-5.4",
-		"conversation_id": seeded.ID,
-		"input":           "Summarize that.",
+		"model":                "gpt-5.4",
+		"conversation_id":      seeded.ID,
+		"previous_response_id": "resp_missing_should_be_ignored",
+		"input":                "Summarize that.",
 	}))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer test-api-key")
@@ -176,8 +181,9 @@ func TestHandleResponsesFreshThreadReplaysLocalConversation(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status mismatch: got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-Conversation-ID"); got != seeded.ID {
-		t.Fatalf("conversation header mismatch: got %q want %q", got, seeded.ID)
+	newConversationID := rec.Header().Get("X-Conversation-ID")
+	if newConversationID == "" || newConversationID == seeded.ID {
+		t.Fatalf("expected a new conversation id, got %q old=%q", newConversationID, seeded.ID)
 	}
 	if captured.UpstreamThreadID != "" {
 		t.Fatalf("expected empty upstream thread id, got %q", captured.UpstreamThreadID)
@@ -185,19 +191,15 @@ func TestHandleResponsesFreshThreadReplaysLocalConversation(t *testing.T) {
 	if captured.continuationDraft != nil {
 		t.Fatalf("expected no continuation draft in fresh-thread mode")
 	}
-	if !captured.ForceLocalConversationContinue {
-		t.Fatalf("expected ForceLocalConversationContinue to be enabled")
+	if captured.ForceLocalConversationContinue {
+		t.Fatalf("expected fresh-thread mode not to continue the local conversation")
 	}
-	assertPromptContains(t, captured.Prompt,
-		"Continue the conversation using the transcript below.",
-		"[user]\nPlease remember this.",
-		"[assistant]\nRemembered.",
-		"[user]\nSummarize that.",
-	)
-	assertConversationContinued(t, app, seeded.ID, "thread-new-responses", "Summary ready.")
+	if got := strings.TrimSpace(captured.Prompt); got != "Summarize that." {
+		t.Fatalf("prompt mismatch: got %q want latest input only", got)
+	}
 }
 
-func TestHandleSillyTavernFreshThreadReplaysLocalConversation(t *testing.T) {
+func TestHandleSillyTavernFreshThreadIgnoresLocalBinding(t *testing.T) {
 	app := newFreshThreadTestApp(t)
 	seeded := seedCompletedConversation(t, app, "conv-st", "Tell a story.", "Once upon a time.", "thread-old-st")
 
@@ -229,8 +231,9 @@ func TestHandleSillyTavernFreshThreadReplaysLocalConversation(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status mismatch: got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-Conversation-ID"); got != seeded.ID {
-		t.Fatalf("conversation header mismatch: got %q want %q", got, seeded.ID)
+	newConversationID := rec.Header().Get("X-Conversation-ID")
+	if newConversationID == "" || newConversationID == seeded.ID {
+		t.Fatalf("expected a new conversation id, got %q old=%q", newConversationID, seeded.ID)
 	}
 	if captured.UpstreamThreadID != "" {
 		t.Fatalf("expected empty upstream thread id, got %q", captured.UpstreamThreadID)
@@ -238,16 +241,12 @@ func TestHandleSillyTavernFreshThreadReplaysLocalConversation(t *testing.T) {
 	if captured.continuationDraft != nil {
 		t.Fatalf("expected no continuation draft in fresh-thread mode")
 	}
-	if !captured.ForceLocalConversationContinue {
-		t.Fatalf("expected ForceLocalConversationContinue to be enabled")
+	if captured.ForceLocalConversationContinue {
+		t.Fatalf("expected fresh-thread mode not to continue the local conversation")
 	}
-	assertPromptContains(t, captured.Prompt,
-		"Continue the conversation using the transcript below.",
-		"[user]\nTell a story.",
-		"[assistant]\nOnce upon a time.",
-		"[user]\n"+sillyTavernContinuePrompt,
-	)
-	assertConversationContinued(t, app, seeded.ID, "thread-new-st", "The story continues.")
+	if strings.Contains(captured.Prompt, "Once upon a time.") {
+		t.Fatalf("expected prompt not to replay prior local conversation, got %q", captured.Prompt)
+	}
 }
 
 func TestNormalizeConfigSetsPprofDefaults(t *testing.T) {
@@ -257,6 +256,28 @@ func TestNormalizeConfigSetsPprofDefaults(t *testing.T) {
 	}
 	if cfg.Debug.PprofAddr != "127.0.0.1:6060" {
 		t.Fatalf("unexpected default pprof addr: %q", cfg.Debug.PprofAddr)
+	}
+}
+
+func TestNormalizeConfigConversationRetentionHours(t *testing.T) {
+	cfg := normalizeConfig(AppConfig{})
+	if got := effectiveConversationRetentionHours(cfg); got != 24 {
+		t.Fatalf("default retention mismatch: got %d want 24", got)
+	}
+
+	zero := 0
+	cfg = normalizeConfig(AppConfig{Storage: StorageConfig{ConversationRetentionHours: &zero}})
+	if got := effectiveConversationRetentionHours(cfg); got != 0 {
+		t.Fatalf("zero retention mismatch: got %d want 0", got)
+	}
+
+	negative := -8
+	cfg = normalizeConfig(AppConfig{Storage: StorageConfig{ConversationRetentionHours: &negative}})
+	if got := effectiveConversationRetentionHours(cfg); got != 0 {
+		t.Fatalf("negative retention mismatch: got %d want 0", got)
+	}
+	if cfg.Storage.ConversationRetentionHours == nil || *cfg.Storage.ConversationRetentionHours != 0 {
+		t.Fatalf("expected negative retention to normalize to pointer value 0, got %+v", cfg.Storage.ConversationRetentionHours)
 	}
 }
 
@@ -1697,7 +1718,7 @@ func TestSQLiteWriterFallbackMetricRemainsStableUnderNormalLoad(t *testing.T) {
 	}
 }
 
-func TestHandleChatCompletionsFreshThreadContinuesExplicitConversationIDWithLatestUserOnly(t *testing.T) {
+func TestHandleChatCompletionsFreshThreadCreatesNewConversationOnRepeatedExplicitID(t *testing.T) {
 	app := newFreshThreadTestApp(t)
 
 	callCount := 0
@@ -1764,25 +1785,31 @@ func TestHandleChatCompletionsFreshThreadContinuesExplicitConversationIDWithLate
 	if secondRec.Code != http.StatusOK {
 		t.Fatalf("second request status mismatch: got %d body=%s", secondRec.Code, secondRec.Body.String())
 	}
-	if got := secondRec.Header().Get("X-Conversation-ID"); got != conversationID {
-		t.Fatalf("second conversation header mismatch: got %q want %q", got, conversationID)
+	secondConversationID := secondRec.Header().Get("X-Conversation-ID")
+	if secondConversationID == "" || secondConversationID == conversationID {
+		t.Fatalf("expected second request to create a new conversation id, got %q first=%q", secondConversationID, conversationID)
 	}
 	if got := secondRec.Header().Get("X-Notion-Thread-ID"); got != "thread-second-turn" {
 		t.Fatalf("second thread header mismatch: got %q want %q", got, "thread-second-turn")
 	}
-	if !secondRequest.ForceLocalConversationContinue {
-		t.Fatalf("expected second request to continue local conversation")
+	if secondRequest.ForceLocalConversationContinue {
+		t.Fatalf("expected second request not to continue local conversation")
 	}
 	if secondRequest.UpstreamThreadID != "" {
 		t.Fatalf("expected fresh-thread mode to keep upstream thread empty, got %q", secondRequest.UpstreamThreadID)
 	}
-	assertPromptContains(t, secondRequest.Prompt,
-		"Continue the conversation using the transcript below.",
-		"[user]\n我有点头晕。你会怎么安抚我？",
-		"[assistant]\n我会先扶你躺好，再慢慢安抚你。",
-		"[user]\n那你把药茶递给我时，会怎么说？",
-	)
-	assertConversationContinued(t, app, conversationID, "thread-second-turn", "把药茶递到你手里时，我会轻声让你慢点喝。")
+	if secondRequest.continuationDraft != nil {
+		t.Fatalf("expected no continuation draft")
+	}
+	if got := strings.TrimSpace(secondRequest.Prompt); got != "那你把药茶递给我时，会怎么说？" {
+		t.Fatalf("second prompt mismatch: got %q", got)
+	}
+	if entry, ok := app.State.conversations().Get(conversationID); !ok || entry.ThreadID != "thread-first-turn" {
+		t.Fatalf("expected first conversation to remain on first thread, ok=%v entry=%+v", ok, entry)
+	}
+	if entry, ok := app.State.conversations().Get(secondConversationID); !ok || entry.ThreadID != "thread-second-turn" {
+		t.Fatalf("expected second conversation to use second thread, ok=%v entry=%+v", ok, entry)
+	}
 }
 
 func TestNewServerStateRejectsEmptyAPIKey(t *testing.T) {
@@ -2572,19 +2599,25 @@ func TestHandleResponsesTypedFirstDecodeFallbackOnConversationIDTypeMismatch(t *
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status mismatch: got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-Conversation-ID"); got != seeded.ID {
-		t.Fatalf("conversation header mismatch: got %q want %q", got, seeded.ID)
+	newConversationID := rec.Header().Get("X-Conversation-ID")
+	if newConversationID == "" || newConversationID == seeded.ID {
+		t.Fatalf("expected a new conversation id, got %q old=%q", newConversationID, seeded.ID)
 	}
-	if !captured.ForceLocalConversationContinue {
-		t.Fatalf("expected ForceLocalConversationContinue to be enabled")
+	if captured.ForceLocalConversationContinue {
+		t.Fatalf("expected fresh-thread mode not to continue local conversation")
 	}
-	assertPromptContains(t, captured.Prompt,
-		"Continue the conversation using the transcript below.",
-		"[user]\nPlease remember this.",
-		"[assistant]\nRemembered.",
-		"[user]\nSummarize that.",
-	)
-	assertConversationContinued(t, app, seeded.ID, "thread-new-responses-fallback", "Summary ready.")
+	if captured.UpstreamThreadID != "" {
+		t.Fatalf("expected empty upstream thread id, got %q", captured.UpstreamThreadID)
+	}
+	if captured.continuationDraft != nil {
+		t.Fatalf("expected no continuation draft")
+	}
+	if got := strings.TrimSpace(captured.Prompt); got != "Summarize that." {
+		t.Fatalf("prompt mismatch: got %q want latest input only", got)
+	}
+	if entry, ok := app.State.conversations().Get(seeded.ID); !ok || entry.ThreadID != "thread-old-responses-fallback" {
+		t.Fatalf("expected seeded conversation to remain unchanged, ok=%v entry=%+v", ok, entry)
+	}
 }
 
 func TestCollectProbeModelPathsIncludesActiveAndAccountProbeJSON(t *testing.T) {

@@ -3328,12 +3328,12 @@ func (c *NotionAIClient) loadTranscriptConversation(ctx context.Context, summary
 	}
 	messageIDs := messageIDsFromThreadRecord(threadData, threadID)
 	recordMap := mapValue(threadData["recordMap"])
-	if len(messageIDs) > 0 {
-		messageData, err := c.syncThreadMessages(ctx, threadID, messageIDs)
+	if missingIDs := missingThreadMessageRecordIDs(recordMap, messageIDs); len(missingIDs) > 0 {
+		messageData, err := c.syncThreadMessages(ctx, threadID, missingIDs)
 		if err != nil {
 			return ConversationEntry{}, err
 		}
-		recordMap = mapValue(messageData["recordMap"])
+		recordMap = mergeThreadMessageRecordMaps(recordMap, mapValue(messageData["recordMap"]))
 	}
 	threadMessages := mapValue(recordMap["thread_message"])
 	messages := make([]ConversationMessage, 0, len(messageIDs))
@@ -3386,14 +3386,55 @@ func (c *NotionAIClient) loadTranscriptConversation(ctx context.Context, summary
 	}, nil
 }
 
-func (c *NotionAIClient) listInferenceTranscripts(ctx context.Context) ([]InferenceTranscriptSummary, error) {
+func missingThreadMessageRecordIDs(recordMap map[string]any, messageIDs []string) []string {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	threadMessages := mapValue(recordMap["thread_message"])
+	missing := make([]string, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if strings.TrimSpace(messageID) == "" {
+			continue
+		}
+		if _, ok := threadMessages[messageID]; !ok {
+			missing = append(missing, messageID)
+		}
+	}
+	return missing
+}
+
+func mergeThreadMessageRecordMaps(base map[string]any, updates map[string]any) map[string]any {
+	if base == nil {
+		return updates
+	}
+	if updates == nil {
+		return base
+	}
+	baseMessages := mapValue(base["thread_message"])
+	if baseMessages == nil {
+		baseMessages = map[string]any{}
+		base["thread_message"] = baseMessages
+	}
+	for id, record := range mapValue(updates["thread_message"]) {
+		baseMessages[id] = record
+	}
+	return base
+}
+
+func (c *NotionAIClient) listInferenceTranscripts(ctx context.Context, limit int) ([]InferenceTranscriptSummary, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	body, err := c.postJSON(ctx, c.Config.NotionUpstream().API("getInferenceTranscriptsForUser"), map[string]any{
 		"threadParentPointer": map[string]any{
 			"table":   "space",
 			"id":      c.Session.SpaceID,
 			"spaceId": c.Session.SpaceID,
 		},
-		"limit":              50,
+		"limit":              limit,
 		"includeWriterChats": false,
 	}, "application/json")
 	if err != nil {

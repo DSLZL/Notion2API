@@ -17,6 +17,19 @@ interface ConversationsResponse {
   success: boolean
   items?: ConversationSummary[]
   conversations?: ConversationSummary[]
+  page?: number
+  limit?: number
+  total?: number
+  has_next?: boolean
+  remote_error?: string
+}
+
+export interface ConversationListParams {
+  page?: number
+  limit?: number
+  status?: string
+  origin?: string
+  q?: string
 }
 
 export interface ConversationDetail {
@@ -29,6 +42,13 @@ export interface ConversationDetail {
   created_at: string
   updated_at?: string
   messages?: ConversationMessage[]
+  remote_error?: string
+}
+
+interface ConversationDetailResponse {
+  success: boolean
+  item?: ConversationDetail
+  remote_error?: string
 }
 
 export interface ConversationMessage {
@@ -37,12 +57,26 @@ export interface ConversationMessage {
   created_at?: string
 }
 
-export function useConversations() {
+export function useConversations(params: ConversationListParams = {}) {
   return useQuery({
-    queryKey: QUERY_KEYS.CONVERSATIONS,
+    queryKey: [...QUERY_KEYS.CONVERSATIONS, params],
     queryFn: async () => {
-      const raw = await api.get<ConversationsResponse>('/admin/conversations')
-      return raw.items ?? raw.conversations ?? []
+      const query = new URLSearchParams()
+      if (params.page) query.set('page', String(params.page))
+      if (params.limit) query.set('limit', String(params.limit))
+      if (params.status && params.status !== 'all') query.set('status', params.status)
+      if (params.origin && params.origin !== 'all') query.set('origin', params.origin)
+      if (params.q) query.set('q', params.q)
+      const suffix = query.toString() ? `?${query.toString()}` : ''
+      const raw = await api.get<ConversationsResponse>(`/admin/conversations${suffix}`)
+      return {
+        items: raw.items ?? raw.conversations ?? [],
+        page: raw.page ?? params.page ?? 1,
+        limit: raw.limit ?? params.limit ?? 20,
+        total: raw.total ?? (raw.items ?? raw.conversations ?? []).length,
+        has_next: raw.has_next ?? false,
+        remote_error: raw.remote_error,
+      }
     },
     staleTime: 10_000,
   })
@@ -51,7 +85,10 @@ export function useConversations() {
 export function useConversationDetail(id: string | null) {
   return useQuery({
     queryKey: [...QUERY_KEYS.CONVERSATIONS, id],
-    queryFn: () => api.get<ConversationDetail>('/admin/conversations/' + id),
+    queryFn: async () => {
+      const raw = await api.get<ConversationDetailResponse>('/admin/conversations/' + encodeURIComponent(id ?? ''))
+      return raw.item ? { ...raw.item, remote_error: raw.remote_error } : raw as unknown as ConversationDetail
+    },
     enabled: !!id,
     staleTime: 5_000,
   })
@@ -60,7 +97,7 @@ export function useConversationDetail(id: string | null) {
 export function useDeleteConversation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.delete('/admin/conversations/' + id),
+    mutationFn: (id: string) => api.delete('/admin/conversations/' + encodeURIComponent(id)),
     onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.CONVERSATIONS }),
   })
 }

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Section } from '@/components/shared/section'
 import { Button } from '@/components/ui/button'
@@ -24,7 +24,7 @@ import { QUERY_KEYS } from '@/lib/constants'
 
 function statusVariant(s: string): 'success' | 'warning' | 'danger' | 'default' {
   if (s === 'completed') return 'success'
-  if (s === 'in_progress') return 'warning'
+  if (s === 'running' || s === 'in_progress') return 'warning'
   if (s === 'failed') return 'danger'
   return 'default'
 }
@@ -38,28 +38,23 @@ export default function ConversationsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBatchDelete, setShowBatchDelete] = useState(false)
   const [showSingleDelete, setShowSingleDelete] = useState(false)
+  const [page, setPage] = useState(1)
+  const pageSize = 20
 
   const qc = useQueryClient()
-  const { data: conversations = [], isLoading, isError } = useConversations()
+  const { data: conversationsData, isLoading, isError } = useConversations({
+    page,
+    limit: pageSize,
+    status: statusFilter,
+    origin: originFilter,
+    q: search.trim(),
+  })
+  const conversations = conversationsData?.items ?? []
+  const total = conversationsData?.total ?? conversations.length
+  const hasNext = conversationsData?.has_next ?? false
   const { data: detail } = useConversationDetail(selectedId)
   const deleteMutation = useDeleteConversation()
   const batchDeleteMutation = useBatchDeleteConversations()
-
-  const filtered = useMemo(() => {
-    let list = conversations
-    if (search) {
-      const q = search.toLowerCase()
-      list = list.filter(
-        (c) =>
-          c.title?.toLowerCase().includes(q) ||
-          c.id?.toLowerCase().includes(q) ||
-          c.account_email?.toLowerCase().includes(q),
-      )
-    }
-    if (statusFilter !== 'all') list = list.filter((c) => c.status === statusFilter)
-    if (originFilter !== 'all') list = list.filter((c) => c.origin === originFilter)
-    return list
-  }, [conversations, search, statusFilter, originFilter])
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -92,7 +87,7 @@ export default function ConversationsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t('conversations.pageTitle', { suffix: conversations.length ? ` (${conversations.length})` : '' })}
+        title={t('conversations.pageTitle', { suffix: total ? ` (${total})` : '' })}
         actions={
           <Button
             variant="ghost"
@@ -109,16 +104,33 @@ export default function ConversationsPage() {
         <Input
           placeholder={t('conversations.searchPlaceholder')}
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setPage(1)
+          }}
           className="max-w-[240px]"
         />
-        <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-[140px]">
+        <Select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value)
+            setPage(1)
+          }}
+          className="w-[140px]"
+        >
           <option value="all">{t('conversations.filterAllStatus')}</option>
           <option value="completed">{t('conversations.filterCompleted')}</option>
-          <option value="in_progress">{t('conversations.filterInProgress')}</option>
+          <option value="running">{t('conversations.filterInProgress')}</option>
           <option value="failed">{t('conversations.filterFailed')}</option>
         </Select>
-        <Select value={originFilter} onChange={(e) => setOriginFilter(e.target.value)} className="w-[130px]">
+        <Select
+          value={originFilter}
+          onChange={(e) => {
+            setOriginFilter(e.target.value)
+            setPage(1)
+          }}
+          className="w-[130px]"
+        >
           <option value="all">{t('conversations.filterAllOrigin')}</option>
           <option value="local">{t('conversations.filterLocal')}</option>
           <option value="notion">{t('conversations.filterNotion')}</option>
@@ -127,6 +139,9 @@ export default function ConversationsPage() {
       </div>
 
       {isError && <Alert variant="error">{t('conversations.loadFailed')}</Alert>}
+      {conversationsData?.remote_error && (
+        <Alert variant="warning">{t('conversations.remoteError', { error: conversationsData.remote_error })}</Alert>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 min-h-[480px]">
         {/* List */}
@@ -138,14 +153,14 @@ export default function ConversationsPage() {
                 <div className="h-3 bg-hairline-cool rounded w-1/2" />
               </div>
             ))}
-            {!isLoading && filtered.length === 0 && (
+            {!isLoading && conversations.length === 0 && (
               <EmptyState
                 icon={<MessageSquare className="h-6 w-6" />}
                 title={t('conversations.emptyTitle')}
                 description={search ? t('conversations.emptySearchDesc') : t('conversations.emptyDesc')}
               />
             )}
-            {filtered.map((c) => (
+            {conversations.map((c) => (
               <div
                 key={c.id}
                 onClick={() => setSelectedId(c.id)}
@@ -179,6 +194,17 @@ export default function ConversationsPage() {
               </Button>
             </div>
           )}
+          {(page > 1 || hasNext) && (
+            <div className="border-t border-hairline p-3 bg-canvas flex items-center justify-between">
+              <Button variant="secondary" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                {t('conversations.previousPage')}
+              </Button>
+              <span className="text-xs text-ink-mute">{t('conversations.pageMeta', { page, total })}</span>
+              <Button variant="secondary" size="sm" onClick={() => setPage((p) => p + 1)} disabled={!hasNext}>
+                {t('conversations.nextPage')}
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Detail */}
@@ -204,6 +230,10 @@ export default function ConversationsPage() {
                   {detail.origin && <Badge>{detail.origin}</Badge>}
                 </div>
               </div>
+
+              {detail.remote_error && (
+                <Alert variant="warning">{t('conversations.remoteError', { error: detail.remote_error })}</Alert>
+              )}
 
               {detail.messages && detail.messages.length > 0 && (
                 <div className="space-y-3">
