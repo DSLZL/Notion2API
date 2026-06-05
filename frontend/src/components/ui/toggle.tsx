@@ -1,8 +1,14 @@
 import { cn } from '@/lib/cn'
-export interface ToggleProps { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean; className?: string }
-export function Toggle({ checked, onChange, disabled, className }: ToggleProps) {
+import type { ButtonHTMLAttributes } from 'react'
+
+export interface ToggleProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onChange'> {
+  checked: boolean
+  onChange: (checked: boolean) => void
+}
+
+export function Toggle({ checked, onChange, disabled, className, ...props }: ToggleProps) {
   return (
-    <button type="button" role="switch" aria-checked={checked} disabled={disabled}
+    <button {...props} type="button" role="switch" aria-checked={checked} disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
         'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Topbar } from '@/components/shell/topbar'
 import { PageHeader } from '@/components/shared/page-header'
 import { Section } from '@/components/shared/section'
 import { Button } from '@/components/ui/button'
@@ -164,17 +165,19 @@ export default function TesterPage() {
   const busy = isStreaming || runTest.isPending
 
   return (
-    <div className="space-y-6">
-      <PageHeader title={t('tester.pageTitle')} />
+    <>
+      <Topbar title={t('nav.tester')} />
+      <div className="space-y-6 p-6">
+        <PageHeader title={t('tester.pageTitle')} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Input Panel */}
         <Section title={t('tester.input')}>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-ink">{t('tester.model')}</label>
-                <Select value={model} onChange={(e) => setModel(e.target.value)}>
+                <label htmlFor="tester-model" className="text-sm font-medium text-ink">{t('tester.model')}</label>
+                <Select id="tester-model" value={model} onChange={(e) => setModel(e.target.value)}>
                   <option value="auto">auto</option>
                   {modelsData?.models?.filter(m => m.enabled).map(m => (
                     <option key={m.id} value={m.model_id}>{m.name}</option>
@@ -182,8 +185,8 @@ export default function TesterPage() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-ink">{t('tester.account')}</label>
-                <Select value={email} onChange={(e) => setEmail(e.target.value)}>
+                <label htmlFor="tester-account" className="text-sm font-medium text-ink">{t('tester.account')}</label>
+                <Select id="tester-account" value={email} onChange={(e) => setEmail(e.target.value)}>
                   <option value="">{t('tester.accountPool')}</option>
                   {accountsData?.accounts?.map((a: any) => (
                     <option key={a.email} value={a.email}>{a.email}</option>
@@ -203,6 +206,7 @@ export default function TesterPage() {
             </label>
 
             <Textarea
+              aria-label={t('tester.promptPlaceholder')}
               placeholder={t('tester.promptPlaceholder')}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -267,7 +271,7 @@ export default function TesterPage() {
             </div>
 
             <Button onClick={fallbackRun} variant="ghost" size="sm" disabled={busy}>
-              Legacy JSON Fallback
+              {t('tester.legacyJsonFallback')}
             </Button>
           </div>
         </Section>
@@ -327,8 +331,9 @@ export default function TesterPage() {
             </div>
           )}
         </Section>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 

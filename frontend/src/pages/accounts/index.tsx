@@ -124,7 +124,7 @@ export function AccountsPage() {
           description={t('accounts.pageDesc', { count: accounts.data?.total ?? 0 })}
           actions={
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => accounts.refetch()}>
+              <Button variant="ghost" size="sm" aria-label={t('accounts.topbar')} onClick={() => accounts.refetch()}>
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setShowEmailLogin(true)}>
@@ -178,86 +178,154 @@ export function AccountsPage() {
             description={search ? t('accounts.emptyFilteredDesc') : t('accounts.emptyDesc')}
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10">
-                  <Checkbox
-                    checked={allSelected}
-                    onChange={(e) => toggleAll(e.target.checked)}
-                    aria-label={t('accounts.selectAllAria')}
-                  />
-                </TableHead>
-                <TableHead>{t('accounts.colAccount')}</TableHead>
-                <TableHead>{t('accounts.colStatus')}</TableHead>
-                <TableHead>{t('accounts.colWorkspace')}</TableHead>
-                <TableHead className="text-right">{t('accounts.colPriority')}</TableHead>
-                <TableHead className="text-right">{t('accounts.colQuota')}</TableHead>
-                <TableHead className="text-right">{t('accounts.colRequests')}</TableHead>
-                <TableHead>{t('accounts.colLastActive')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            <div className="grid gap-3 md:hidden">
               {filtered.map((account) => (
-                <TableRow
+                <div
                   key={account.id}
-                  className="cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                  className="rounded-[var(--radius-card)] border border-hairline bg-canvas px-4 py-3 text-left transition-colors hover:bg-canvas-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   onClick={() => setSelected(account)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSelected(account)
+                    }
+                  }}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={account.email ? selectedEmails.includes(account.email) : false}
-                      disabled={!account.email}
-                      onChange={(e) => account.email && toggleEmail(account.email, e.target.checked)}
-                      aria-label={t('accounts.selectAccountAria', { name: account.email ?? account.name })}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div>
-                      <p className="font-medium text-ink">
-                        {account.user_name || account.name}
-                        {account.active && (
-                          <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-primary align-middle" title={t('accounts.activeSessionTitle')} />
-                        )}
-                      </p>
-                      {account.email && (
-                        <p className="text-xs text-ink-mute">{account.email}</p>
-                      )}
+                  <div className="flex items-start gap-3">
+                    <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={account.email ? selectedEmails.includes(account.email) : false}
+                        disabled={!account.email}
+                        onChange={(e) => account.email && toggleEmail(account.email, e.target.checked)}
+                        aria-label={t('accounts.selectAccountAria', { name: account.email ?? account.name })}
+                      />
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      <StatusDot status={accountStatusVariant(account) === 'success' ? 'active' : accountStatusVariant(account) === 'danger' ? 'error' : accountStatusVariant(account)} />
-                      <Badge variant={accountStatusVariant(account)}>
-                        {accountStatusLabel(account, t)}
-                      </Badge>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-ink">
+                            {account.user_name || account.name}
+                            {account.active && (
+                              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title={t('accounts.activeSessionTitle')} />
+                            )}
+                          </p>
+                          {account.email && <p className="truncate text-xs text-ink-mute">{account.email}</p>}
+                        </div>
+                        <Badge variant={accountStatusVariant(account)}>
+                          {accountStatusLabel(account, t)}
+                        </Badge>
+                      </div>
+                      <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <dt className="text-ink-mute">{t('accounts.colWorkspace')}</dt>
+                          <dd className="mt-0.5 truncate text-ink">{account.space_name ?? account.workspace ?? '\u2014'}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-ink-mute">{t('accounts.colPriority')}</dt>
+                          <dd className="mt-0.5 tabular-nums text-ink">{account.priority ?? 100}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-ink-mute">{t('accounts.colQuota')}</dt>
+                          <dd className="mt-0.5 tabular-nums text-ink">
+                            {account.hourly_quota ? `${account.window_request_count ?? 0}/${account.hourly_quota}` : '\u221E'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-ink-mute">{t('accounts.colLastActive')}</dt>
+                          <dd className="mt-0.5 text-ink">{formatRelativeTime(account.last_used_at ?? account.last_active)}</dd>
+                        </div>
+                      </dl>
                     </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-ink-mute">
-                    {account.space_name ?? account.workspace ?? '\u2014'}
-                  </TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">
-                    {account.priority ?? 100}
-                  </TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">
-                    {account.hourly_quota ? (
-                      <span className={account.quota_limited ? 'text-warning' : ''}>
-                        {account.window_request_count ?? 0}/{account.hourly_quota}
-                      </span>
-                    ) : (
-                      <span className="text-ink-mute">\u221E</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">
-                    {(account.total_successes ?? 0) + (account.total_failures ?? 0)}
-                  </TableCell>
-                  <TableCell className="text-sm text-ink-mute">
-                    {formatRelativeTime(account.last_used_at ?? account.last_active)}
-                  </TableCell>
-                </TableRow>
+                  </div>
+                </div>
               ))}
-            </TableBody>
-          </Table>
+            </div>
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={allSelected}
+                        onChange={(e) => toggleAll(e.target.checked)}
+                        aria-label={t('accounts.selectAllAria')}
+                      />
+                    </TableHead>
+                    <TableHead>{t('accounts.colAccount')}</TableHead>
+                    <TableHead>{t('accounts.colStatus')}</TableHead>
+                    <TableHead>{t('accounts.colWorkspace')}</TableHead>
+                    <TableHead className="text-right">{t('accounts.colPriority')}</TableHead>
+                    <TableHead className="text-right">{t('accounts.colQuota')}</TableHead>
+                    <TableHead className="text-right">{t('accounts.colRequests')}</TableHead>
+                    <TableHead>{t('accounts.colLastActive')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((account) => (
+                    <TableRow
+                      key={account.id}
+                      className="cursor-pointer"
+                      onClick={() => setSelected(account)}
+                    >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={account.email ? selectedEmails.includes(account.email) : false}
+                          disabled={!account.email}
+                          onChange={(e) => account.email && toggleEmail(account.email, e.target.checked)}
+                          aria-label={t('accounts.selectAccountAria', { name: account.email ?? account.name })}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium text-ink">
+                            {account.user_name || account.name}
+                            {account.active && (
+                              <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-primary align-middle" title={t('accounts.activeSessionTitle')} />
+                            )}
+                          </p>
+                          {account.email && (
+                            <p className="text-xs text-ink-mute">{account.email}</p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          <StatusDot status={accountStatusVariant(account) === 'success' ? 'active' : accountStatusVariant(account) === 'danger' ? 'error' : accountStatusVariant(account)} />
+                          <Badge variant={accountStatusVariant(account)}>
+                            {accountStatusLabel(account, t)}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-ink-mute">
+                        {account.space_name ?? account.workspace ?? '\u2014'}
+                      </TableCell>
+                      <TableCell className="text-sm text-right tabular-nums">
+                        {account.priority ?? 100}
+                      </TableCell>
+                      <TableCell className="text-sm text-right tabular-nums">
+                        {account.hourly_quota ? (
+                          <span className={account.quota_limited ? 'text-warning' : ''}>
+                            {account.window_request_count ?? 0}/{account.hourly_quota}
+                          </span>
+                        ) : (
+                          <span className="text-ink-mute">\u221E</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-right tabular-nums">
+                        {(account.total_successes ?? 0) + (account.total_failures ?? 0)}
+                      </TableCell>
+                      <TableCell className="text-sm text-ink-mute">
+                        {formatRelativeTime(account.last_used_at ?? account.last_active)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

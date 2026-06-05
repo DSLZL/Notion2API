@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Topbar } from '@/components/shell/topbar'
 import { PageHeader } from '@/components/shared/page-header'
 import { Section } from '@/components/shared/section'
 import { Button } from '@/components/ui/button'
@@ -85,23 +86,27 @@ export default function ConversationsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={t('conversations.pageTitle', { suffix: total ? ` (${total})` : '' })}
-        actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => qc.invalidateQueries({ queryKey: QUERY_KEYS.CONVERSATIONS })}
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        }
-      />
+    <>
+      <Topbar title={t('nav.conversations')} />
+      <div className="space-y-6 p-6">
+        <PageHeader
+          title={t('conversations.pageTitle', { suffix: total ? ` (${total})` : '' })}
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={t('conversations.pageTitle', { suffix: '' })}
+              onClick={() => qc.invalidateQueries({ queryKey: QUERY_KEYS.CONVERSATIONS })}
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          }
+        />
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <Input
+          aria-label={t('conversations.searchPlaceholder')}
           placeholder={t('conversations.searchPlaceholder')}
           value={search}
           onChange={(e) => {
@@ -111,12 +116,13 @@ export default function ConversationsPage() {
           className="max-w-[240px]"
         />
         <Select
+          aria-label={t('conversations.filterAllStatus')}
           value={statusFilter}
           onChange={(e) => {
             setStatusFilter(e.target.value)
             setPage(1)
           }}
-          className="w-[140px]"
+          className="w-full sm:w-[140px]"
         >
           <option value="all">{t('conversations.filterAllStatus')}</option>
           <option value="completed">{t('conversations.filterCompleted')}</option>
@@ -124,12 +130,13 @@ export default function ConversationsPage() {
           <option value="failed">{t('conversations.filterFailed')}</option>
         </Select>
         <Select
+          aria-label={t('conversations.filterAllOrigin')}
           value={originFilter}
           onChange={(e) => {
             setOriginFilter(e.target.value)
             setPage(1)
           }}
-          className="w-[130px]"
+          className="w-full sm:w-[130px]"
         >
           <option value="all">{t('conversations.filterAllOrigin')}</option>
           <option value="local">{t('conversations.filterLocal')}</option>
@@ -278,6 +285,7 @@ export default function ConversationsPage() {
         title={t('conversations.singleDeleteTitle')}
         description={t('conversations.deleteConfirmDesc')}
       />
-    </div>
+      </div>
+    </>
   )
 }

@@ -35,6 +35,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'nav.conversations': '会话',
     'nav.settings': '设置',
     'nav.logout': '退出登录',
+    'nav.openMenu': '打开导航',
+    'nav.closeMenu': '关闭导航',
 
     'tester.pageTitle': 'Prompt 测试台',
     'tester.input': '输入',
@@ -58,6 +60,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'tester.conversation': '会话',
     'tester.raw.show': '显示原始 JSON',
     'tester.raw.hide': '隐藏原始 JSON',
+    'tester.legacyJsonFallback': 'Legacy JSON 回退',
     'tester.thinking': '思考内容',
     'tester.thinkingSuppressed': '当前关闭了思考内容外发，若要查看请开启“显示思考内容”。',
     'tester.readAttachmentFailed': '读取附件失败',
@@ -381,6 +384,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'nav.conversations': 'Conversations',
     'nav.settings': 'Settings',
     'nav.logout': 'Logout',
+    'nav.openMenu': 'Open navigation',
+    'nav.closeMenu': 'Close navigation',
 
     'tester.pageTitle': 'Prompt Tester',
     'tester.input': 'Input',
@@ -404,6 +409,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'tester.conversation': 'Conversation',
     'tester.raw.show': 'Show raw JSON',
     'tester.raw.hide': 'Hide raw JSON',
+    'tester.legacyJsonFallback': 'Legacy JSON Fallback',
     'tester.thinking': 'Reasoning',
     'tester.thinkingSuppressed': 'Reasoning output is suppressed. Enable “Show Thoughts” to stream it.',
     'tester.readAttachmentFailed': 'Failed to read attachment',

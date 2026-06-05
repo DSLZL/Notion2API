@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Topbar } from '@/components/shell/topbar'
 import { PageHeader } from '@/components/shared/page-header'
 import { Section } from '@/components/shared/section'
 import { Button } from '@/components/ui/button'
@@ -210,14 +211,17 @@ export default function SettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <PageHeader title={t('settings.title')} />
-        <div className="animate-pulse space-y-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-12 bg-hairline-cool rounded-[var(--radius-card)]" />
-          ))}
+      <>
+        <Topbar title={t('nav.settings')} />
+        <div className="space-y-6 p-6">
+          <PageHeader title={t('settings.title')} />
+          <div className="animate-pulse space-y-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-12 bg-hairline-cool rounded-[var(--radius-card)]" />
+            ))}
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
@@ -225,15 +229,17 @@ export default function SettingsPage() {
   const snapshots = snapshotsData?.snapshots ?? snapshotsData?.items ?? []
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={t('settings.title')}
-        actions={
-          <Button onClick={handleSave} disabled={!isDirty} loading={saveMutation.isPending}>
-            <Save className="h-4 w-4" /> {t('settings.saveChanges')}
-          </Button>
-        }
-      />
+    <>
+      <Topbar title={t('nav.settings')} />
+      <div className="space-y-6 p-6">
+        <PageHeader
+          title={t('settings.title')}
+          actions={
+            <Button onClick={handleSave} disabled={!isDirty} loading={saveMutation.isPending}>
+              <Save className="h-4 w-4" /> {t('settings.saveChanges')}
+            </Button>
+          }
+        />
 
       {error && <Alert variant="error">{error}</Alert>}
 
@@ -248,11 +254,11 @@ export default function SettingsPage() {
               </Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'api_key', title: t('settings.changeApiKey') })}>
+              <Button variant="secondary" size="sm" aria-label={t('settings.changeApiKey')} onClick={() => setSecretDialog({ field: 'api_key', title: t('settings.changeApiKey') })}>
                 {secrets?.api_key_set ? t('common.change') : t('common.set')}
               </Button>
               {secrets?.api_key_set && (
-                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('api_key')}>{t('common.clear')}</Button>
+                <Button variant="ghost" size="sm" aria-label={`${t('common.clear')} ${t('settings.apiKey')}`} onClick={() => handleSecretClear('api_key')}>{t('common.clear')}</Button>
               )}
             </div>
           </div>
@@ -264,11 +270,11 @@ export default function SettingsPage() {
               </Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'admin.password', title: t('settings.changeAdminPassword') })}>
+              <Button variant="secondary" size="sm" aria-label={t('settings.changeAdminPassword')} onClick={() => setSecretDialog({ field: 'admin.password', title: t('settings.changeAdminPassword') })}>
                 {secrets?.admin_password_set ? t('common.change') : t('common.set')}
               </Button>
               {secrets?.admin_password_set && (
-                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('admin.password')}>{t('common.clear')}</Button>
+                <Button variant="ghost" size="sm" aria-label={`${t('common.clear')} ${t('settings.adminPassword')}`} onClick={() => handleSecretClear('admin.password')}>{t('common.clear')}</Button>
               )}
             </div>
           </div>
@@ -280,11 +286,11 @@ export default function SettingsPage() {
               </Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSecretDialog({ field: 'resin_proxy_token', title: t('settings.changeResinProxyToken') })}>
+              <Button variant="secondary" size="sm" aria-label={t('settings.changeResinProxyToken')} onClick={() => setSecretDialog({ field: 'resin_proxy_token', title: t('settings.changeResinProxyToken') })}>
                 {secrets?.resin_proxy_token_set ? t('common.change') : t('common.set')}
               </Button>
               {secrets?.resin_proxy_token_set && (
-                <Button variant="ghost" size="sm" onClick={() => handleSecretClear('resin_proxy_token')}>{t('common.clear')}</Button>
+                <Button variant="ghost" size="sm" aria-label={`${t('common.clear')} ${t('settings.resinProxyToken')}`} onClick={() => handleSecretClear('resin_proxy_token')}>{t('common.clear')}</Button>
               )}
             </div>
           </div>
@@ -350,9 +356,10 @@ export default function SettingsPage() {
             { key: 'enable_csv_attachment_support', labelKey: 'settings.feature.enable_csv_attachment_support' },
             { key: 'writer_mode', labelKey: 'settings.feature.writer_mode' },
           ].map(({ key, labelKey }) => (
-            <div key={key} className="flex items-center justify-between">
+            <div key={key} className="flex max-w-xl items-center justify-between gap-4 rounded-[var(--radius-card)] border border-hairline bg-canvas-soft px-3 py-2">
               <span className="text-sm text-ink">{t(labelKey)}</span>
               <Toggle
+                aria-label={t(labelKey)}
                 checked={getVal(['features', key], false) as boolean}
                 onChange={(v) => setVal(['features', key], v)}
               />
@@ -364,9 +371,10 @@ export default function SettingsPage() {
       {/* Session Refresh */}
       <Section title={t('settings.sessionRefresh')}>
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex max-w-xl items-center justify-between gap-4 rounded-[var(--radius-card)] border border-hairline bg-canvas-soft px-3 py-2">
             <span className="text-sm text-ink">{t('settings.enabled')}</span>
             <Toggle
+              aria-label={t('settings.enabled')}
               checked={getVal(['session_refresh', 'enabled'], true) as boolean}
               onChange={(v) => setVal(['session_refresh', 'enabled'], v)}
             />
@@ -385,9 +393,10 @@ export default function SettingsPage() {
             { key: 'retry_on_auth_error', labelKey: 'settings.retryOnAuthError' },
             { key: 'auto_switch_account', labelKey: 'settings.autoSwitchAccount' },
           ].map(({ key, labelKey }) => (
-            <div key={key} className="flex items-center justify-between">
+            <div key={key} className="flex max-w-xl items-center justify-between gap-4 rounded-[var(--radius-card)] border border-hairline bg-canvas-soft px-3 py-2">
               <span className="text-sm text-ink">{t(labelKey)}</span>
               <Toggle
+                aria-label={t(labelKey)}
                 checked={getVal(['session_refresh', key], false) as boolean}
                 onChange={(v) => setVal(['session_refresh', key], v)}
               />
@@ -426,16 +435,18 @@ export default function SettingsPage() {
       {/* Storage */}
       <Section title={t('settings.storage')}>
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex max-w-xl items-center justify-between gap-4 rounded-[var(--radius-card)] border border-hairline bg-canvas-soft px-3 py-2">
             <span className="text-sm text-ink">{t('settings.persistConversations')}</span>
             <Toggle
+              aria-label={t('settings.persistConversations')}
               checked={getVal(['config', 'storage', 'persist_conversations'], true) as boolean}
               onChange={(v) => setVal(['config', 'storage', 'persist_conversations'], v)}
             />
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex max-w-xl items-center justify-between gap-4 rounded-[var(--radius-card)] border border-hairline bg-canvas-soft px-3 py-2">
             <span className="text-sm text-ink">{t('settings.persistResponses')}</span>
             <Toggle
+              aria-label={t('settings.persistResponses')}
               checked={getVal(['config', 'storage', 'persist_responses'], true) as boolean}
               onChange={(v) => setVal(['config', 'storage', 'persist_responses'], v)}
             />
@@ -461,12 +472,14 @@ export default function SettingsPage() {
           ).map(([alias, target]) => (
             <div key={alias} className="flex items-center gap-2">
               <Input
+                aria-label={alias}
                 value={alias}
                 readOnly
                 className="max-w-[160px] bg-canvas-soft"
               />
               <span className="text-ink-mute text-sm">→</span>
               <Input
+                aria-label={`${alias} ${t('settings.modelAliases')}`}
                 value={target}
                 onChange={(e) => {
                   const a = { ...((getVal(['model_aliases'], {}) as Record<string, string>) || {}) };
@@ -478,6 +491,7 @@ export default function SettingsPage() {
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label={`${t('common.delete')} ${alias}`}
                 onClick={() => {
                   const a = { ...((getVal(['model_aliases'], {}) as Record<string, string>) || {}) };
                   delete a[alias];
@@ -555,6 +569,7 @@ export default function SettingsPage() {
         title={t('settings.importConfirmTitle')}
         description={t('settings.importConfirmDesc', { file: importFile ? ` (${importFile.name})` : '' })}
       />
-    </div>
+      </div>
+    </>
   )
 }

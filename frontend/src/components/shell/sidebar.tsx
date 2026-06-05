@@ -84,6 +84,7 @@ export function Sidebar() {
     <>
       {/* Mobile hamburger */}
       <button
+        aria-label={t('nav.openMenu')}
         onClick={() => setMobileOpen(true)}
         className="fixed left-3 top-3 z-40 rounded-md border border-hairline bg-canvas p-2 shadow-sm md:hidden"
       >
@@ -96,6 +97,7 @@ export function Sidebar() {
           <div className="absolute inset-0 bg-black/30" onClick={() => setMobileOpen(false)} />
           <aside className="relative z-50 h-full w-[240px] bg-canvas border-r border-hairline">
             <button
+              aria-label={t('nav.closeMenu')}
               onClick={() => setMobileOpen(false)}
               className="absolute right-3 top-4 text-ink-mute hover:text-ink"
             >

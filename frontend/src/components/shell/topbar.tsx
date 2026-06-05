@@ -10,7 +10,7 @@ export interface TopbarProps {
 export function Topbar({ title, actions }: TopbarProps) {
   const { locale, setLocale, t } = useI18n()
   return (
-    <header className="flex h-14 items-center justify-between border-b border-hairline px-6">
+    <header className="flex h-14 items-center justify-between border-b border-hairline pl-16 pr-3 sm:px-6">
       <h1 className="text-lg font-semibold text-ink">{title}</h1>
       <div className="flex items-center gap-2">
         {actions}
